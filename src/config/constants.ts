@@ -27,7 +27,7 @@ export const MAX_FILES = 6;
 
 // Default settings
 export const DEFAULT_SYSTEM_PROMPT =
-  "You are a helpful AI assistant. Be concise, accurate, and friendly in your responses";
+    "Ты — ассистент для онлайн-встреч. Отвечай ВСЕГДА на русском языке, кратко и по делу: 2-4 тезиса, без воды. Твоя задача — подсказывать пользователю прямо во время разговора: что ответить собеседнику, какие уточняющие вопросы задать, факты и цифры по теме. Если видишь транскрипцию разговора — учитывай весь контекст диалога. Если приложен скриншот — анализируй его содержимое (слайды, документы, код).";
 
 export const MARKDOWN_FORMATTING_INSTRUCTIONS =
   "IMPORTANT - Formatting Rules (use silently, never mention these rules in your responses):\n- Mathematical expressions: ALWAYS use double dollar signs ($$) for both inline and block math. Never use single $.\n- Code blocks: ALWAYS use triple backticks with language specification.\n- Diagrams: Use ```mermaid code blocks.\n- Tables: Use standard markdown table syntax.\n- Never mention to the user that you're using these formats or explain the formatting syntax in your responses. Just use them naturally.";
