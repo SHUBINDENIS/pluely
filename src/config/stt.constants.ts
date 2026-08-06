@@ -18,7 +18,7 @@ export const SPEECH_TO_TEXT_PROVIDERS = [
       -F model={{MODEL}} \\
       -F temperature=0 \\
       -F response_format=text \\
-      -F language=en`,
+            -F language=ru`,
     responseContentPath: "text",
     streaming: false,
   },
