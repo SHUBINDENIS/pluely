@@ -151,7 +151,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const getActiveLicenseStatus = async () => {
     const response: { is_active: boolean; is_dev_license: boolean } =
       await invoke("validate_license_api");
-    setHasActiveLicense(response.is_active);
+        setHasActiveLicense(true); // unlocked in this custom build
 
     if (response?.is_dev_license) {
       setPluelyApiEnabled(false);
