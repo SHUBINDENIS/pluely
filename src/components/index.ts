@@ -5,6 +5,7 @@ export * from "./Header";
 export * from "./Selection";
 export * from "./TextInput";
 export * from "./DragButton";
+export * from "./WidthToggle";
 export * from "./GetLicense";
 export * from "./CustomCursor";
 export * from "./Sidebar";
