@@ -62,6 +62,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
     showQuickActions,
     setShowQuickActions,
     handleQuickActionClick,
+    submitText,
     vadConfig,
     updateVadConfiguration,
     isRecordingInContinuousMode,
@@ -76,6 +77,16 @@ export const SystemAudio = (props: useSystemAudioType) => {
 
   // View mode toggle
   const [conversationMode, setConversationMode] = useState(false);
+
+  // Typed question inside the voice chat
+  const [textInput, setTextInput] = useState("");
+
+  const handleSubmitText = async () => {
+    const value = textInput.trim();
+    if (!value || isAIProcessing) return;
+    setTextInput("");
+    await submitText(value);
+  };
 
   const isVadMode = vadConfig.enabled;
   const hasResponse = lastAIResponse || isAIProcessing;
@@ -302,6 +313,32 @@ export const SystemAudio = (props: useSystemAudioType) => {
                   />
                 ) : (
                   <>
+                    {/* Type a question directly into the voice chat */}
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleSubmitText();
+                      }}
+                      className="flex items-center gap-1.5 px-1"
+                    >
+                      <input
+                        data-no-drag="true"
+                        value={textInput}
+                        onChange={(e) => setTextInput(e.target.value)}
+                        placeholder="Напишите вопрос сюда…"
+                        disabled={isAIProcessing}
+                        className="flex-1 h-8 px-2.5 text-xs rounded-md bg-background border border-input focus:outline-none focus:ring-1 focus:ring-ring"
+                      />
+                      <Button
+                        type="submit"
+                        size="sm"
+                        className="h-8 px-3 text-[10px]"
+                        disabled={!textInput.trim() || isAIProcessing}
+                      >
+                        Отправить
+                      </Button>
+                    </form>
+
                     {/* Recording Panel */}
                     <RecordingPanel
                       isVadMode={isVadMode}
