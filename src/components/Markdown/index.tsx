@@ -2,6 +2,12 @@ import React from "react";
 import { Streamdown } from "streamdown";
 import "katex/dist/katex.min.css";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+
+// Enable single-dollar inline math ($...$) in addition to $$...$$.
+// Streamdown defaults singleDollarTextMath:false, which leaves $x$ as raw text.
+const REMARK_PLUGINS: any = [remarkGfm, [remarkMath, { singleDollarTextMath: true }]];
 
 interface MarkdownRendererProps {
   children: string;
@@ -17,6 +23,7 @@ export function Markdown({
       isAnimating={isStreaming}
       shikiTheme={["github-light", "github-dark"]}
       components={COMPONENTS as any}
+      remarkPlugins={REMARK_PLUGINS}
       controls={{
         table: true,
         code: true,
