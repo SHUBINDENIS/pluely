@@ -70,6 +70,12 @@ export function useSystemAudio() {
   const globalShortcuts = useGlobalShortcuts();
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
   const [capturing, setCapturing] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [screenshotImage, setScreenshotImageState] = useState<string | null>(
+    null
+  );
+  const [isCapturingScreenshot, setIsCapturingScreenshot] =
+    useState<boolean>(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isAIProcessing, setIsAIProcessing] = useState(false);
   const [lastTranscription, setLastTranscription] = useState<string>("");
@@ -110,6 +116,9 @@ export function useSystemAudio() {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSavingRef = useRef<boolean>(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  // Mirror the current screenshot in a ref so the async speech→STT→AI flow
+  // (a Tauri event listener) always reads the latest value, not a stale closure.
+  const screenshotRef = useRef<string | null>(null);
 
   // Load context settings and VAD config from localStorage on mount
   useEffect(() => {
@@ -467,6 +476,41 @@ export function useSystemAudio() {
     }
   }, [isContinuousMode, isRecordingInContinuousMode]);
 
+  // Screenshot: keep state and ref in sync so it can be attached to the very
+  // next voice question (see processWithAI) and shown in the UI.
+  const setScreenshotImage = useCallback((value: string | null) => {
+    screenshotRef.current = value;
+    setScreenshotImageState(value);
+  }, []);
+
+  const captureScreenshot = useCallback(async () => {
+    if (isCapturingScreenshot) return;
+    setIsCapturingScreenshot(true);
+    try {
+      const platform = navigator.platform.toLowerCase();
+      if (platform.includes("mac")) {
+        const {
+          checkScreenRecordingPermission,
+          requestScreenRecordingPermission,
+        } = await import("tauri-plugin-macos-permissions-api");
+        const hasPermission = await checkScreenRecordingPermission();
+        if (!hasPermission) {
+          await requestScreenRecordingPermission();
+          setIsCapturingScreenshot(false);
+          return;
+        }
+      }
+      const base64: string = await invoke("capture_screenshot", {
+        screenId: null,
+      });
+      setScreenshotImage(base64);
+    } catch (err) {
+      console.error("Failed to capture screenshot:", err);
+    } finally {
+      setIsCapturingScreenshot(false);
+    }
+  }, [isCapturingScreenshot, setScreenshotImage]);
+
   // AI Processing function
   const processWithAI = useCallback(
     async (
@@ -479,6 +523,10 @@ export function useSystemAudio() {
       }
 
       abortControllerRef.current = new AbortController();
+
+      // Grab any pending screenshot so this voice question is sent WITH the image
+      // (unified voice + screenshot context). Cleared in `finally` after the request.
+      const pendingImage = screenshotRef.current;
 
       try {
         setIsAIProcessing(true);
@@ -508,7 +556,7 @@ export function useSystemAudio() {
             systemPrompt: prompt,
             history: previousMessages,
             userMessage: transcription,
-            imagesBase64: [],
+            imagesBase64: pendingImage ? [pendingImage] : [],
           })) {
             fullResponse += chunk;
             setLastAIResponse((prev) => prev + chunk);
@@ -544,13 +592,15 @@ export function useSystemAudio() {
         setError("Failed to get AI response");
       } finally {
         setIsAIProcessing(false);
+        // Screenshot has been consumed by this request; clear it.
+        if (pendingImage) setScreenshotImage(null);
         // No auto-restart - user manually controls when to start next recording
       }
     },
-    [selectedAIProvider, allAiProviders, conversation.messages]
+    [selectedAIProvider, allAiProviders, conversation.messages, setScreenshotImage]
   );
 
-  const startCapture = useCallback(async () => {
+  const startCapture = useCallback(async (resume: boolean = false) => {
     try {
       setError("");
 
@@ -563,16 +613,20 @@ export function useSystemAudio() {
 
       const isContinuous = !vadConfig.enabled;
 
-      // Set up conversation
-      const conversationId = generateConversationId("sysaudio");
-      setConversation({
-        id: conversationId,
-        title: "",
-        messages: [],
-        createdAt: 0,
-        updatedAt: 0,
-      });
+      // Set up conversation — but when RESUMING keep the existing conversation
+      // so the context (transcript + AI answers) is preserved across pauses.
+      if (!resume) {
+        const conversationId = generateConversationId("sysaudio");
+        setConversation({
+          id: conversationId,
+          title: "",
+          messages: [],
+          createdAt: 0,
+          updatedAt: 0,
+        });
+      }
 
+      setPaused(false);
       setCapturing(true);
       setIsPopoverOpen(true);
       setIsContinuousMode(isContinuous);
@@ -618,6 +672,7 @@ export function useSystemAudio() {
 
       // Reset ALL states
       setCapturing(false);
+      setPaused(false);
       setIsProcessing(false);
       setIsAIProcessing(false);
       setIsContinuousMode(false);
@@ -633,6 +688,37 @@ export function useSystemAudio() {
       console.error("Stop capture error:", err);
     }
   }, []);
+
+  // Pause: stop audio input but KEEP the window open and KEEP the conversation
+  // context, so the user can resume later without losing anything. This is the
+  // context-preserving counterpart to stopCapture.
+  const pauseCapture = useCallback(async () => {
+    try {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      await invoke<string>("stop_system_audio_capture");
+      setCapturing(false);
+      setPaused(true);
+      setIsProcessing(false);
+      setIsAIProcessing(false);
+      setIsContinuousMode(false);
+      setIsRecordingInContinuousMode(false);
+      setRecordingProgress(0);
+      // Intentionally keep lastTranscription, lastAIResponse and conversation.
+      setIsPopoverOpen(true);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setError(`Failed to pause capture: ${errorMessage}`);
+      console.error("Pause capture error:", err);
+    }
+  }, []);
+
+  // Resume: continue capturing in the SAME conversation (no context reset).
+  const resumeCapture = useCallback(async () => {
+    await startCapture(true);
+  }, [startCapture]);
 
   // Manual stop for continuous recording
   const manualStopAndSend = useCallback(async () => {
@@ -683,6 +769,7 @@ export function useSystemAudio() {
   useEffect(() => {
     const shouldOpenPopover =
       capturing ||
+      paused ||
       setupRequired ||
       isAIProcessing ||
       !!lastAIResponse ||
@@ -691,6 +778,7 @@ export function useSystemAudio() {
     resizeWindow(shouldOpenPopover);
   }, [
     capturing,
+    paused,
     setupRequired,
     isAIProcessing,
     lastAIResponse,
@@ -701,12 +789,21 @@ export function useSystemAudio() {
   useEffect(() => {
     globalShortcuts.registerSystemAudioCallback(async () => {
       if (capturing) {
-        await stopCapture();
+        await pauseCapture();
+      } else if (paused) {
+        await resumeCapture();
       } else {
-        await startCapture();
+        await startCapture(false);
       }
     });
-  }, [startCapture, stopCapture]);
+  }, [
+    startCapture,
+    stopCapture,
+    pauseCapture,
+    resumeCapture,
+    capturing,
+    paused,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -880,6 +977,7 @@ export function useSystemAudio() {
 
   return {
     capturing,
+    paused,
     isProcessing,
     isAIProcessing,
     lastTranscription,
@@ -888,6 +986,13 @@ export function useSystemAudio() {
     setupRequired,
     startCapture,
     stopCapture,
+    pauseCapture,
+    resumeCapture,
+    // Screenshot (attached to the next voice question for unified context)
+    screenshotImage,
+    setScreenshotImage,
+    isCapturingScreenshot,
+    captureScreenshot,
     handleSetup,
     isPopoverOpen,
     setIsPopoverOpen,
