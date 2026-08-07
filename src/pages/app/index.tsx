@@ -1,4 +1,4 @@
-import { Card, Updater, DragButton, CustomCursor, Button } from "@/components";
+import { Card, Updater, DragButton, WidthToggle, CustomCursor, Button } from "@/components";
 import {
   SystemAudio,
   Completion,
@@ -41,7 +41,7 @@ const App = () => {
           isHidden ? "hidden pointer-events-none" : ""
         }`}
       >
-        <Card className="w-full flex flex-row items-center gap-2 p-2">
+                <Card data-tauri-drag-region="true" className="w-full flex flex-row items-center gap-2 p-2">
           <SystemAudio {...systemAudio} />
           {systemAudio?.capturing ? (
             <div className="flex flex-row items-center gap-2 justify-between w-full">
@@ -79,6 +79,7 @@ const App = () => {
           </div>
 
           <Updater />
+                  <WidthToggle />
           <DragButton />
         </Card>
         {customizable.cursor.type === "invisible" && platform !== "linux" ? (
