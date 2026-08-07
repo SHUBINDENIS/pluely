@@ -75,7 +75,8 @@ pub fn set_window_height(window: tauri::WebviewWindow, height: u32) -> Result<()
     use tauri::{LogicalSize, Size};
 
     // Simply set the window size with fixed width and new height
-    let new_size = LogicalSize::new(600.0, height as f64);
+        let cur_w = window.inner_size().map(|s| s.width as f64 / window.scale_factor().unwrap_or(1.0)).unwrap_or(600.0);
+    let new_size = LogicalSize::new(cur_w, height as f64);
     window
         .set_size(Size::Logical(new_size))
         .map_err(|e| format!("Failed to resize window: {}", e))?;
@@ -220,5 +221,14 @@ pub fn show_dashboard_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Strin
             .set_focus()
             .map_err(|e| format!("Failed to focus new dashboard window: {}", e))?;
     }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_window_width(window: tauri::WebviewWindow, width: u32) -> Result<(), String> {
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let cur_h = window.inner_size().map(|s| s.height as f64 / scale).unwrap_or(54.0);
+    let new_size = tauri::LogicalSize::new(width as f64, cur_h);
+    window.set_size(tauri::Size::Logical(new_size)).map_err(|e| format!("resize failed: {}", e))?;
     Ok(())
 }
