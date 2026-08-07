@@ -9,6 +9,8 @@ import { useApp } from "@/hooks";
 import { useApp as useAppContext } from "@/contexts";
 import { SparklesIcon } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { useEffect } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { ErrorLayout } from "@/layouts";
 import { getPlatform } from "@/lib";
@@ -25,6 +27,18 @@ const App = () => {
       console.error("Failed to open dashboard:", error);
     }
   };
+
+    useEffect(() => {
+      const bar = document.querySelector('[data-tauri-drag-region="true"]');
+      if (!bar) return;
+      const onDown = (e: any) => {
+        if (e.button !== 0) return;
+        if ((e.target as HTMLElement).closest('input, textarea, button, a, select, [role="button"], [contenteditable="true"], [data-no-drag]')) return;
+        getCurrentWebviewWindow().startDragging().catch(() => undefined);
+      };
+      bar.addEventListener("mousedown", onDown as any);
+      return () => bar.removeEventListener("mousedown", onDown as any);
+    }, []);
 
   return (
     <ErrorBoundary
