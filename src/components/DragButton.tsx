@@ -54,12 +54,12 @@ export const DragButton = () => {
   }
 
     return (
-          <div
-                  data-tauri-drag-region="true"
-                  title="Drag window"
-                  className="flex items-center justify-center h-8 px-2 rounded-md cursor-grab active:cursor-grabbing hover:bg-secondary/40 transition-colors select-none"
-                >
-                <GripVerticalIcon className="h-5 w-5 pointer-events-none opacity-80" />
-          </div>
-        );
+      <div
+        data-tauri-drag-region="true"
+        title="Перетащить окно (можно тянуть за всю верхнюю панель)"
+        className="flex items-center justify-center h-9 px-3 rounded-md cursor-grab active:cursor-grabbing hover:bg-secondary/50 transition-colors select-none border border-secondary/30"
+      >
+        <GripVerticalIcon className="h-6 w-6 pointer-events-none opacity-90" />
+      </div>
+    );
 };
