@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Pluely",
+    "productName": "Pluely-Denis",
   "version": "0.1.9",
   "identifier": "com.srikanthnani.pluely",
   "build": {
@@ -13,7 +13,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "Pluely - AI Assistant",
+                "title": "Pluely-Denis",
         "width": 600,
         "height": 54,
         "decorations": false,
