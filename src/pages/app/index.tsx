@@ -9,7 +9,7 @@ import { useApp } from "@/hooks";
 import { useApp as useAppContext } from "@/contexts";
 import { SparklesIcon } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { ErrorLayout } from "@/layouts";
@@ -28,17 +28,61 @@ const App = () => {
     }
   };
 
-    useEffect(() => {
-      const bar = document.querySelector('[data-tauri-drag-region="true"]');
-      if (!bar) return;
-      const onDown = (e: any) => {
-        if (e.button !== 0) return;
-        if ((e.target as HTMLElement).closest('input, textarea, button, a, select, [role="button"], [contenteditable="true"], [data-no-drag]')) return;
-        getCurrentWebviewWindow().startDragging().catch(() => undefined);
-      };
-      bar.addEventListener("mousedown", onDown as any);
-      return () => bar.removeEventListener("mousedown", onDown as any);
-    }, []);
+  useEffect(() => {
+    const win: any = getCurrentWindow();
+    // Edge/corner resize strips (Windows-like). Real OS resize via Tauri.
+    const mkStrip = (css: string, dir: string) => {
+      const d = document.createElement("div");
+      d.setAttribute("data-no-drag", "true");
+      d.style.cssText = "position:fixed;z-index:2147483647;" + css;
+      d.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        win.startResizeDragging(dir).catch(() => undefined);
+      });
+      document.body.appendChild(d);
+      return d;
+    };
+    const strips = [
+      mkStrip("top:0;bottom:0;right:0;width:6px;cursor:ew-resize;", "East"),
+      mkStrip("top:0;bottom:0;left:0;width:6px;cursor:ew-resize;", "West"),
+      mkStrip("left:0;right:0;bottom:0;height:6px;cursor:ns-resize;", "South"),
+      mkStrip("right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;", "SouthEast"),
+      mkStrip("left:0;bottom:0;width:14px;height:14px;cursor:nesw-resize;", "SouthWest"),
+    ];
+    // Whole-top-bar drag with a small movement threshold so clicks on
+    // buttons/inputs still work, but dragging anywhere empty moves the window.
+    const bar = document.querySelector('[data-tauri-drag-region="true"]');
+    let armed = false;
+    let sx = 0;
+    let sy = 0;
+    const onDown = (e: any) => {
+      if (e.button !== 0) return;
+      const t = e.target as HTMLElement;
+      if (t.closest('input, textarea, [contenteditable="true"], [data-no-drag]')) return;
+      armed = true;
+      sx = e.clientX;
+      sy = e.clientY;
+    };
+    const onMove = (e: any) => {
+      if (!armed) return;
+      if (Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy) < 6) return;
+      armed = false;
+      win.startDragging().catch(() => undefined);
+    };
+    const onUp = () => {
+      armed = false;
+    };
+    bar?.addEventListener("mousedown", onDown);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      strips.forEach((s) => s.remove());
+      bar?.removeEventListener("mousedown", onDown);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
 
   return (
     <ErrorBoundary
