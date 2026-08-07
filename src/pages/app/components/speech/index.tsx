@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useEffect } from "react";
 import {
   Button,
   Popover,
@@ -13,9 +13,9 @@ import {
   AudioLinesIcon,
   CameraIcon,
   PlusIcon,
+  PlayIcon,
   XIcon,
 } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
 import { ModeSwitcher } from "./ModeSwitcher";
 import { RecordingPanel } from "./RecordingPanel";
 import { ResultsSection } from "./ResultsSection";
@@ -38,6 +38,13 @@ export const SystemAudio = (props: useSystemAudioType) => {
     setupRequired,
     startCapture,
     stopCapture,
+    pauseCapture,
+    resumeCapture,
+    paused,
+    screenshotImage,
+    setScreenshotImage,
+    isCapturingScreenshot,
+    captureScreenshot,
     isPopoverOpen,
     setIsPopoverOpen,
     useSystemPrompt,
@@ -70,10 +77,6 @@ export const SystemAudio = (props: useSystemAudioType) => {
   // View mode toggle
   const [conversationMode, setConversationMode] = useState(false);
 
-  // Screenshot state
-  const [screenshotImage, setScreenshotImage] = useState<string | null>(null);
-  const [isCapturingScreenshot, setIsCapturingScreenshot] = useState(false);
-
   const isVadMode = vadConfig.enabled;
   const hasResponse = lastAIResponse || isAIProcessing;
 
@@ -93,16 +96,12 @@ export const SystemAudio = (props: useSystemAudioType) => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isPopoverOpen]);
 
-  // Reset screenshot when processing starts (message is being sent)
-  useEffect(() => {
-    if (isProcessing && screenshotImage) {
-      setScreenshotImage(null);
-    }
-  }, [isProcessing, screenshotImage]);
-
   const handleToggleCapture = async () => {
     if (capturing) {
-      await stopCapture();
+      // Pause instead of stop: keeps the window open and preserves context.
+      await pauseCapture();
+    } else if (paused) {
+      await resumeCapture();
     } else {
       await startCapture();
     }
@@ -115,45 +114,6 @@ export const SystemAudio = (props: useSystemAudioType) => {
     });
   };
 
-  // Capture screenshot functionality
-  const handleCaptureScreenshot = useCallback(async () => {
-    if (isCapturingScreenshot) return;
-
-    setIsCapturingScreenshot(true);
-    try {
-      // Check screen recording permission on macOS
-      const platform = navigator.platform.toLowerCase();
-      if (platform.includes("mac")) {
-        const {
-          checkScreenRecordingPermission,
-          requestScreenRecordingPermission,
-        } = await import("tauri-plugin-macos-permissions-api");
-
-        const hasPermission = await checkScreenRecordingPermission();
-        if (!hasPermission) {
-          await requestScreenRecordingPermission();
-          setIsCapturingScreenshot(false);
-          return;
-        }
-      }
-
-      // Capture screenshot
-      const base64: string = await invoke("capture_screenshot", {
-        screenId: null, // Use default screen
-      });
-
-      setScreenshotImage(base64);
-    } catch (err) {
-      console.error("Failed to capture screenshot:", err);
-    } finally {
-      setIsCapturingScreenshot(false);
-    }
-  }, [isCapturingScreenshot]);
-
-  const handleRemoveScreenshot = useCallback(() => {
-    setScreenshotImage(null);
-  }, []);
-
   const getButtonIcon = () => {
     if (setupRequired) return <AlertCircleIcon className="text-orange-500" />;
     if (error && !setupRequired)
@@ -161,6 +121,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
     if (isProcessing) return <LoaderIcon className="animate-spin" />;
     if (capturing)
       return <AudioLinesIcon className="text-green-500 animate-pulse" />;
+    if (paused) return <PlayIcon className="text-amber-500" />;
     return <HeadphonesIcon />;
   };
 
@@ -168,15 +129,17 @@ export const SystemAudio = (props: useSystemAudioType) => {
     if (setupRequired) return "Setup required - Click for instructions";
     if (error && !setupRequired) return `Error: ${error}`;
     if (isProcessing) return "Transcribing audio...";
-    if (capturing) return "Stop system audio capture";
-    return "Start system audio capture";
+    if (capturing) return "Пауза прослушивания (контекст сохранится)";
+    if (paused)
+      return "На паузе — продолжить прослушивание (контекст сохранён)";
+    return "Начать прослушивание системного звука";
   };
 
   return (
     <Popover
       open={isPopoverOpen}
       onOpenChange={(open) => {
-        if (capturing && !open) {
+        if ((capturing || paused) && !open) {
           return;
         }
         setIsPopoverOpen(open);
@@ -196,7 +159,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
         </Button>
       </PopoverTrigger>
 
-      {(capturing || setupRequired || error) && (
+      {(capturing || paused || setupRequired || error) && (
         <PopoverContent
           align="end"
           side="bottom"
@@ -230,7 +193,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
                     <Button
                       size="sm"
                       variant={screenshotImage ? "default" : "outline"}
-                      onClick={handleCaptureScreenshot}
+                      onClick={captureScreenshot}
                       disabled={isCapturingScreenshot}
                       className={cn(
                         "h-6 text-[10px] gap-1 px-2",
@@ -267,10 +230,15 @@ export const SystemAudio = (props: useSystemAudioType) => {
                       size="icon"
                       variant="ghost"
                       className="h-6 w-6"
-                      title="Close"
+                      title={paused ? "Завершить сессию" : "Close"}
                       onClick={() => {
-                        setIsPopoverOpen(false);
-                        resizeWindow(false);
+                        if (paused) {
+                          // Fully end the session (audio already stopped).
+                          stopCapture();
+                        } else {
+                          setIsPopoverOpen(false);
+                          resizeWindow(false);
+                        }
                       }}
                     >
                       <XIcon className="h-3.5 w-3.5" />
@@ -302,7 +270,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
                       size="icon"
                       variant="ghost"
                       className="h-5 w-5"
-                      onClick={handleRemoveScreenshot}
+                      onClick={() => setScreenshotImage(null)}
                     >
                       <XIcon className="h-3 w-3" />
                     </Button>
