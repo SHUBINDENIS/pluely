@@ -149,6 +149,20 @@ export function useSystemAudio() {
 
   // Load quick actions from localStorage on mount
   useEffect(() => {
+    // One-time reseed to the new task-oriented defaults so existing installs
+    // replace the old English presets. Runs once; afterwards the user's own
+    // edits are respected.
+    const QA_SEED_KEY = "quick_actions_seed_v2";
+    if (safeLocalStorage.getItem(QA_SEED_KEY) !== "true") {
+      setQuickActions(DEFAULT_QUICK_ACTIONS);
+      safeLocalStorage.setItem(
+        STORAGE_KEYS.SYSTEM_AUDIO_QUICK_ACTIONS,
+        JSON.stringify(DEFAULT_QUICK_ACTIONS)
+      );
+      safeLocalStorage.setItem(QA_SEED_KEY, "true");
+      return;
+    }
+
     const savedActions = safeLocalStorage.getItem(
       STORAGE_KEYS.SYSTEM_AUDIO_QUICK_ACTIONS
     );
@@ -600,6 +614,31 @@ export function useSystemAudio() {
     [selectedAIProvider, allAiProviders, conversation.messages, setScreenshotImage]
   );
 
+  // Send a typed question into the SAME voice conversation (with any attached
+  // screenshot). Lets the user work entirely inside the Listen popover.
+  const submitText = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      setError("");
+      const effectiveSystemPrompt = useSystemPrompt
+        ? systemPrompt || DEFAULT_SYSTEM_PROMPT
+        : contextContent || DEFAULT_SYSTEM_PROMPT;
+      const previousMessages = conversation.messages.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+      }));
+      await processWithAI(trimmed, effectiveSystemPrompt, previousMessages);
+    },
+    [
+      useSystemPrompt,
+      systemPrompt,
+      contextContent,
+      conversation.messages,
+      processWithAI,
+    ]
+  );
+
   const startCapture = useCallback(async (resume: boolean = false) => {
     try {
       setError("");
@@ -805,6 +844,20 @@ export function useSystemAudio() {
     paused,
   ]);
 
+  // While the Listen popover is active (capturing OR paused), the screenshot
+  // hotkey attaches the shot to THIS voice conversation instead of the hidden
+  // Ask box. Cleared when the popover is inactive so the Ask box works again.
+  useEffect(() => {
+    if (capturing || paused) {
+      globalShortcuts.registerScreenshotCallbackPriority(() =>
+        captureScreenshot()
+      );
+      return () => {
+        globalShortcuts.registerScreenshotCallbackPriority(null);
+      };
+    }
+  }, [capturing, paused, captureScreenshot]);
+
   useEffect(() => {
     return () => {
       if (abortControllerRef.current) {
@@ -931,8 +984,16 @@ export function useSystemAudio() {
       if (!isPopoverOpen || !isContinuousMode) return;
       if (isProcessing || isAIProcessing) return;
 
-      // Enter: Start recording (when not recording) or Stop & Send (when recording)
-      if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      // Enter: Start recording (when not recording) or Stop & Send (when
+      // recording) — but NOT while the user is typing in a text field.
+      if (
+        e.key === "Enter" &&
+        !e.shiftKey &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !(e.target instanceof HTMLInputElement) &&
+        !(e.target instanceof HTMLTextAreaElement)
+      ) {
         e.preventDefault();
         if (!isRecordingInContinuousMode) {
           startContinuousRecording();
@@ -1017,6 +1078,7 @@ export function useSystemAudio() {
     showQuickActions,
     setShowQuickActions,
     handleQuickActionClick,
+    submitText,
     // VAD configuration
     vadConfig,
     updateVadConfiguration,

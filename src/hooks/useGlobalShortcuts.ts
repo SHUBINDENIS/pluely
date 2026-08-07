@@ -20,6 +20,10 @@ let lastScreenshotEventTime = 0;
 let globalInputRef: HTMLInputElement | null = null;
 let globalAudioCallback: (() => void) | null = null;
 let globalScreenshotCallback: (() => void | Promise<void>) | null = null;
+// Higher-priority screenshot handler. When set (e.g. while the voice/Listen
+// popover is open), it takes over the screenshot hotkey so the screenshot is
+// attached to the voice context instead of the (hidden) Ask box.
+let globalScreenshotCallbackPriority: (() => void | Promise<void>) | null = null;
 let globalSystemAudioCallback: (() => void) | null = null;
 let globalCustomShortcutCallbacks: Map<string, () => void> = new Map();
 
@@ -83,6 +87,14 @@ export const useGlobalShortcuts = () => {
     (callback: () => void | Promise<void>) => {
       screenshotCallbackRef.current = callback;
       globalScreenshotCallback = callback;
+    },
+    []
+  );
+
+  // Register a higher-priority screenshot handler (pass null to clear it).
+  const registerScreenshotCallbackPriority = useCallback(
+    (callback: (() => void | Promise<void>) | null) => {
+      globalScreenshotCallbackPriority = callback;
     },
     []
   );
@@ -189,9 +201,11 @@ export const useGlobalShortcuts = () => {
 
           lastScreenshotEventTime = now;
 
-          if (globalScreenshotCallback) {
+          const screenshotCb =
+            globalScreenshotCallbackPriority || globalScreenshotCallback;
+          if (screenshotCb) {
             try {
-              Promise.resolve(globalScreenshotCallback())
+              Promise.resolve(screenshotCb())
                 .catch((error) => {
                   console.error("Screenshot shortcut callback failed:", error);
                 })
@@ -262,6 +276,7 @@ export const useGlobalShortcuts = () => {
     registerInputRef,
     registerAudioCallback,
     registerScreenshotCallback,
+    registerScreenshotCallbackPriority,
     registerSystemAudioCallback,
     registerCustomShortcutCallback,
     unregisterCustomShortcutCallback,
