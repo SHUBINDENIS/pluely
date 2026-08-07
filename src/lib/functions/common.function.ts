@@ -142,6 +142,8 @@ export function buildDynamicMessages(
   userMessage: string,
   imagesBase64: string[] = []
 ): any[] {
+  const MAX_HISTORY_MESSAGES = 20; // context-overflow guard
+  history = history.slice(-MAX_HISTORY_MESSAGES);
   const userMessageTemplateIndex = messagesTemplate.findIndex((m) =>
     JSON.stringify(m).includes("{{TEXT}}")
   );
