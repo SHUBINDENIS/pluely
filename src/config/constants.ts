@@ -20,10 +20,13 @@ export const STORAGE_KEYS = {
   SELECTED_AUDIO_DEVICES: "selected_audio_devices",
   RESPONSE_SETTINGS: "response_settings",
   SUPPORTS_IMAGES: "supports_images",
+  WINDOW_WIDTH: "window_width",
 } as const;
 
 // Max number of files that can be attached to a message
-export const MAX_FILES = 6;
+export const MAX_FILES = 8;
+export const WINDOW_WIDTH_PRESETS = [520, 600, 720, 900] as const;
+export const DEFAULT_WINDOW_WIDTH = 600;
 
 // Default settings
 export const DEFAULT_SYSTEM_PROMPT =
