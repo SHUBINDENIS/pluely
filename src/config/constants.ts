@@ -57,8 +57,11 @@ export const MARKDOWN_FORMATTING_INSTRUCTIONS =
   "IMPORTANT - Formatting Rules (use silently, never mention these rules in your responses):\n- Mathematical expressions: ALWAYS use double dollar signs ($$) for both inline and block math. Never use single $.\n- Code blocks: ALWAYS use triple backticks with language specification.\n- Diagrams: Use ```mermaid code blocks.\n- Tables: Use standard markdown table syntax.\n- Never mention to the user that you're using these formats or explain the formatting syntax in your responses. Just use them naturally.";
 
 export const DEFAULT_QUICK_ACTIONS = [
-  "What should I say?",
-  "Follow-up questions",
-  "Fact-check",
-  "Recap",
+  "Ответь строго и по существу",
+  "Подумай ещё раз, тщательнее",
+  "Разбери по шагам с выкладками",
+  "Сформулируй определение/теорему точно",
+  "Приведи пример или контрпример",
+  "Уточни вопрос",
+  "Кратко: суть в 2–3 предложениях",
 ];
