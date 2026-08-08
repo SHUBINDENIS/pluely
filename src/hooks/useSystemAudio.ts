@@ -14,6 +14,8 @@ import {
   shouldUsePluelyAPI,
   generateConversationTitle,
   saveConversation,
+  getAllConversations,
+  getConversationById,
   CONVERSATION_SAVE_DEBOUNCE_MS,
   generateConversationId,
   generateMessageId,
@@ -76,6 +78,13 @@ export function useSystemAudio() {
   );
   const [isCapturingScreenshot, setIsCapturingScreenshot] =
     useState<boolean>(false);
+  // The user message currently being answered (voice transcription OR typed
+  // text OR screenshot prompt) — shown in the feed while the answer streams.
+  const [pendingUserMessage, setPendingUserMessage] = useState<string>("");
+  // Past voice sessions for the in-window history browser.
+  const [pastConversations, setPastConversations] = useState<ChatConversation[]>(
+    []
+  );
   const [isProcessing, setIsProcessing] = useState(false);
   const [isAIProcessing, setIsAIProcessing] = useState(false);
   const [lastTranscription, setLastTranscription] = useState<string>("");
@@ -525,6 +534,14 @@ export function useSystemAudio() {
     }
   }, [isCapturingScreenshot, setScreenshotImage]);
 
+  // Remove base64 data-URL images from message content before sending history
+  // to the API, so screenshots are never re-sent as text (keeps token cost
+  // bounded — an image is only ever sent once, on the turn it was added).
+  const stripDataUrlImages = (content: string): string =>
+    typeof content === "string"
+      ? content.replace(/!\[[^\]]*\]\(data:[^)]*\)/g, "[скриншот]")
+      : content;
+
   // AI Processing function
   const processWithAI = useCallback(
     async (
@@ -544,6 +561,7 @@ export function useSystemAudio() {
 
       try {
         setIsAIProcessing(true);
+        setPendingUserMessage(transcription);
         setLastAIResponse("");
         setError("");
 
@@ -568,7 +586,10 @@ export function useSystemAudio() {
             provider: usePluelyAPI ? undefined : provider,
             selectedProvider: selectedAIProvider,
             systemPrompt: prompt,
-            history: previousMessages,
+            history: previousMessages.map((m) => ({
+              ...m,
+              content: stripDataUrlImages(m.content as string),
+            })),
             userMessage: transcription,
             imagesBase64: pendingImage ? [pendingImage] : [],
           })) {
@@ -587,7 +608,11 @@ export function useSystemAudio() {
               {
                 id: generateMessageId("user", timestamp),
                 role: "user" as const,
-                content: transcription,
+                // Embed the screenshot as a data-URL image so it shows in the
+                // feed and is saved with the dialog. Stripped from API history.
+                content: pendingImage
+                  ? `${transcription}\n\n![screenshot](data:image/png;base64,${pendingImage})`
+                  : transcription,
                 timestamp,
               },
               {
@@ -606,6 +631,7 @@ export function useSystemAudio() {
         setError("Failed to get AI response");
       } finally {
         setIsAIProcessing(false);
+        setPendingUserMessage("");
         // Screenshot has been consumed by this request; clear it.
         if (pendingImage) setScreenshotImage(null);
         // No auto-restart - user manually controls when to start next recording
@@ -638,6 +664,49 @@ export function useSystemAudio() {
       processWithAI,
     ]
   );
+
+  // Screenshot hotkey action: capture AND immediately send it to the active
+  // session with a default analysis prompt, so the user gets an answer (and
+  // the screenshot appears + is saved in the dialog).
+  const captureScreenshotAndSubmit = useCallback(async () => {
+    await captureScreenshot();
+    if (screenshotRef.current) {
+      await submitText(
+        "Проанализируй скриншот и помоги: дай точный, пошаговый ответ по существу."
+      );
+    }
+  }, [captureScreenshot, submitText]);
+
+  // History browser: list past voice sessions and open one to continue it.
+  const refreshPastConversations = useCallback(async () => {
+    try {
+      const all = await getAllConversations();
+      setPastConversations(all.filter((c) => c.id.startsWith("sysaudio")));
+    } catch (err) {
+      console.error("Failed to load past conversations:", err);
+    }
+  }, []);
+
+  const loadConversation = useCallback(async (id: string) => {
+    try {
+      const conv = await getConversationById(id);
+      if (conv) {
+        setConversation(conv);
+        setLastAIResponse("");
+        setLastTranscription("");
+        setPendingUserMessage("");
+        setError("");
+        // Open in a "paused / ready to continue" state: window stays open,
+        // the feed shows the loaded messages, and pressing play (or typing,
+        // or Ctrl+Shift+S) continues this same session.
+        setCapturing(false);
+        setPaused(true);
+        setIsPopoverOpen(true);
+      }
+    } catch (err) {
+      console.error("Failed to load conversation:", err);
+    }
+  }, []);
 
   const startCapture = useCallback(async (resume: boolean = false) => {
     try {
@@ -850,13 +919,13 @@ export function useSystemAudio() {
   useEffect(() => {
     if (capturing || paused) {
       globalShortcuts.registerScreenshotCallbackPriority(() =>
-        captureScreenshot()
+        captureScreenshotAndSubmit()
       );
       return () => {
         globalShortcuts.registerScreenshotCallbackPriority(null);
       };
     }
-  }, [capturing, paused, captureScreenshot]);
+  }, [capturing, paused, captureScreenshotAndSubmit]);
 
   useEffect(() => {
     return () => {
@@ -923,11 +992,13 @@ export function useSystemAudio() {
     });
     setLastTranscription("");
     setLastAIResponse("");
+    setPendingUserMessage("");
     setError("");
     setSetupRequired(false);
     setIsProcessing(false);
     setIsAIProcessing(false);
-    setIsPopoverOpen(false);
+    // Keep the popover OPEN so a new session starts right in the same window.
+    setIsPopoverOpen(true);
     setUseSystemPrompt(true);
   }, []);
 
@@ -1079,6 +1150,12 @@ export function useSystemAudio() {
     setShowQuickActions,
     handleQuickActionClick,
     submitText,
+    pendingUserMessage,
+    captureScreenshotAndSubmit,
+    // History browser
+    pastConversations,
+    refreshPastConversations,
+    loadConversation,
     // VAD configuration
     vadConfig,
     updateVadConfiguration,
