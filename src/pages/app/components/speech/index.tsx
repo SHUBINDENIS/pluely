@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Button,
   Popover,
@@ -14,6 +14,7 @@ import {
   CameraIcon,
   PlusIcon,
   PlayIcon,
+  HistoryIcon,
   XIcon,
 } from "lucide-react";
 import { ModeSwitcher } from "./ModeSwitcher";
@@ -32,7 +33,6 @@ export const SystemAudio = (props: useSystemAudioType) => {
     capturing,
     isProcessing,
     isAIProcessing,
-    lastTranscription,
     lastAIResponse,
     error,
     setupRequired,
@@ -63,6 +63,10 @@ export const SystemAudio = (props: useSystemAudioType) => {
     setShowQuickActions,
     handleQuickActionClick,
     submitText,
+    pendingUserMessage,
+    pastConversations,
+    refreshPastConversations,
+    loadConversation,
     vadConfig,
     updateVadConfiguration,
     isRecordingInContinuousMode,
@@ -75,11 +79,10 @@ export const SystemAudio = (props: useSystemAudioType) => {
 
   const { hasActiveLicense, supportsImages } = useApp();
 
-  // View mode toggle
-  const [conversationMode, setConversationMode] = useState(false);
-
   // Typed question inside the voice chat
   const [textInput, setTextInput] = useState("");
+  // In-window history browser
+  const [showHistory, setShowHistory] = useState(false);
 
   const handleSubmitText = async () => {
     const value = textInput.trim();
@@ -88,24 +91,16 @@ export const SystemAudio = (props: useSystemAudioType) => {
     await submitText(value);
   };
 
+  const toggleHistory = () => {
+    setShowHistory((v) => {
+      if (!v) refreshPastConversations();
+      return !v;
+    });
+  };
+
   const isVadMode = vadConfig.enabled;
-  const hasResponse = lastAIResponse || isAIProcessing;
-
-  // Keyboard shortcut for Cmd+K to toggle view mode
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isPopoverOpen) return;
-
-      // Cmd+K or Ctrl+K to toggle view mode
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        setConversationMode((prev) => !prev);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isPopoverOpen]);
+  const hasResponse =
+    lastAIResponse || isAIProcessing || conversation.messages.length > 0;
 
   const handleToggleCapture = async () => {
     if (capturing) {
@@ -114,7 +109,9 @@ export const SystemAudio = (props: useSystemAudioType) => {
     } else if (paused) {
       await resumeCapture();
     } else {
-      await startCapture();
+      // Continue the current chat if it already has messages (e.g. a session
+      // opened from history); otherwise start a fresh one.
+      await startCapture(conversation.messages.length > 0);
     }
   };
 
@@ -210,7 +207,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
                         "h-6 text-[10px] gap-1 px-2",
                         screenshotImage && "bg-primary text-primary-foreground"
                       )}
-                      title="Capture screenshot to include with transcription"
+                      title="Скриншот к следующему вопросу (или Ctrl+Shift+S — отправить сразу)"
                     >
                       {isCapturingScreenshot ? (
                         <LoaderIcon className="w-3 h-3 animate-spin" />
@@ -221,6 +218,20 @@ export const SystemAudio = (props: useSystemAudioType) => {
                     </Button>
                   )}
 
+                  {/* History Button */}
+                  {!setupRequired && (
+                    <Button
+                      size="sm"
+                      variant={showHistory ? "default" : "ghost"}
+                      onClick={toggleHistory}
+                      className="h-6 text-[10px] gap-1 px-2"
+                      title="История прошлых сессий"
+                    >
+                      <HistoryIcon className="w-3 h-3" />
+                      История
+                    </Button>
+                  )}
+
                   {/* New Conversation Button */}
                   {!setupRequired && (
                     <Button
@@ -228,7 +239,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
                       variant="ghost"
                       onClick={startNewConversation}
                       className="h-6 text-[10px] gap-1 px-2"
-                      title="Start a new conversation"
+                      title="Новая сессия (в этом же окне)"
                     >
                       <PlusIcon className="w-3 h-3" />
                       New
@@ -271,10 +282,10 @@ export const SystemAudio = (props: useSystemAudioType) => {
                     />
                     <div className="flex-1 min-w-0">
                       <p className="text-[10px] font-medium">
-                        Screenshot attached
+                        Скриншот прикреплён
                       </p>
                       <p className="text-[9px] text-muted-foreground">
-                        Will be sent with next transcription
+                        Уйдёт со следующим вопросом (Ctrl+Shift+S — сразу)
                       </p>
                     </div>
                     <Button
@@ -313,6 +324,49 @@ export const SystemAudio = (props: useSystemAudioType) => {
                   />
                 ) : (
                   <>
+                    {/* History browser (past sessions) */}
+                    {showHistory && (
+                      <div className="rounded-lg border border-border/50 bg-muted/20 p-2 space-y-1 max-h-[52vh] overflow-y-auto">
+                        <div className="flex items-center justify-between px-1 pb-1">
+                          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                            История сессий
+                          </span>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-5 w-5"
+                            onClick={() => setShowHistory(false)}
+                          >
+                            <XIcon className="h-3 w-3" />
+                          </Button>
+                        </div>
+                        {pastConversations.length === 0 ? (
+                          <p className="text-[10px] text-muted-foreground px-1 py-2">
+                            Пока нет сохранённых сессий.
+                          </p>
+                        ) : (
+                          pastConversations.map((c) => (
+                            <button
+                              key={c.id}
+                              data-no-drag="true"
+                              onClick={() => {
+                                loadConversation(c.id);
+                                setShowHistory(false);
+                              }}
+                              className="w-full text-left p-2 rounded-md hover:bg-secondary/50 transition-colors"
+                            >
+                              <div className="text-[11px] font-medium truncate">
+                                {c.title || "Без названия"}
+                              </div>
+                              <div className="text-[9px] text-muted-foreground">
+                                {c.messages.length} сообщ.
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+
                     {/* Type a question directly into the voice chat */}
                     <form
                       onSubmit={(e) => {
@@ -352,14 +406,12 @@ export const SystemAudio = (props: useSystemAudioType) => {
                       onIgnore={ignoreContinuousRecording}
                     />
 
-                    {/* AI Response */}
+                    {/* Chat feed (voice + text + screenshots, with history) */}
                     <ResultsSection
-                      lastTranscription={lastTranscription}
                       lastAIResponse={lastAIResponse}
                       isAIProcessing={isAIProcessing}
                       conversation={conversation}
-                      conversationMode={conversationMode}
-                      setConversationMode={setConversationMode}
+                      pendingUserMessage={pendingUserMessage}
                     />
 
                     {/* Settings Panel */}
