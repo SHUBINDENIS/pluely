@@ -42,6 +42,8 @@ export const SystemAudio = (props: useSystemAudioType) => {
     pauseCapture,
     resumeCapture,
     paused,
+    hideLevel,
+    setHideLevel,
     screenshotImage,
     setScreenshotImage,
     isCapturingScreenshot,
@@ -106,6 +108,12 @@ export const SystemAudio = (props: useSystemAudioType) => {
     lastAIResponse || isAIProcessing || conversation.messages.length > 0;
 
   const handleToggleCapture = async () => {
+    // If the dialog was hidden via Ctrl+\ , the leftmost button just re-opens
+    // it (closing stays exclusively on Ctrl+\).
+    if (hideLevel > 0) {
+      setHideLevel(0);
+      return;
+    }
     if (capturing) {
       // Pause instead of stop: keeps the window open and preserves context.
       await pauseCapture();
