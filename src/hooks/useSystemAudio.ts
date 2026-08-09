@@ -7,6 +7,7 @@ import { fetchSTT, fetchAIResponse } from "@/lib/functions";
 import {
   DEFAULT_QUICK_ACTIONS,
   DEFAULT_SYSTEM_PROMPT,
+  SESSION_PRESETS,
   STORAGE_KEYS,
 } from "@/config";
 import {
@@ -85,6 +86,18 @@ export function useSystemAudio() {
   const [pastConversations, setPastConversations] = useState<ChatConversation[]>(
     []
   );
+  // Selected session preset (system prompt). Persisted; read via a ref in the
+  // async speech→AI flow so it's always current without re-subscribing.
+  const [sessionPresetId, setSessionPresetIdState] = useState<string>(
+    () => safeLocalStorage.getItem("session_preset_id") || SESSION_PRESETS[0].id
+  );
+  const presetPromptRef = useRef<string>(
+    SESSION_PRESETS.find(
+      (p) =>
+        p.id ===
+        (safeLocalStorage.getItem("session_preset_id") || SESSION_PRESETS[0].id)
+    )?.prompt || ""
+  );
   const [isProcessing, setIsProcessing] = useState(false);
   const [isAIProcessing, setIsAIProcessing] = useState(false);
   const [lastTranscription, setLastTranscription] = useState<string>("");
@@ -128,6 +141,9 @@ export function useSystemAudio() {
   // Mirror the current screenshot in a ref so the async speech→STT→AI flow
   // (a Tauri event listener) always reads the latest value, not a stale closure.
   const screenshotRef = useRef<string | null>(null);
+  // Ref to the latest "capture screenshot and submit" action, so the global
+  // screenshot-hotkey handler is registered ONCE and never churns/de-registers.
+  const captureAndSubmitRef = useRef<() => Promise<void>>(async () => {});
 
   // Load context settings and VAD config from localStorage on mount
   useEffect(() => {
@@ -309,7 +325,7 @@ export function useSystemAudio() {
                 setError("");
 
                 const effectiveSystemPrompt = useSystemPrompt
-                  ? systemPrompt || DEFAULT_SYSTEM_PROMPT
+                  ? presetPromptRef.current || systemPrompt || DEFAULT_SYSTEM_PROMPT
                   : contextContent || DEFAULT_SYSTEM_PROMPT;
 
                 const previousMessages = conversation.messages.map((msg) => {
@@ -423,7 +439,7 @@ export function useSystemAudio() {
     setError("");
 
     const effectiveSystemPrompt = useSystemPrompt
-      ? systemPrompt || DEFAULT_SYSTEM_PROMPT
+      ? presetPromptRef.current || systemPrompt || DEFAULT_SYSTEM_PROMPT
       : contextContent || DEFAULT_SYSTEM_PROMPT;
 
     // Include the most recent transcription in conversation history if it exists
@@ -648,7 +664,7 @@ export function useSystemAudio() {
       if (!trimmed) return;
       setError("");
       const effectiveSystemPrompt = useSystemPrompt
-        ? systemPrompt || DEFAULT_SYSTEM_PROMPT
+        ? presetPromptRef.current || systemPrompt || DEFAULT_SYSTEM_PROMPT
         : contextContent || DEFAULT_SYSTEM_PROMPT;
       const previousMessages = conversation.messages.map((msg) => ({
         role: msg.role,
@@ -676,6 +692,22 @@ export function useSystemAudio() {
       );
     }
   }, [captureScreenshot, submitText]);
+
+  // Keep the hotkey ref pointing at the latest action.
+  useEffect(() => {
+    captureAndSubmitRef.current = captureScreenshotAndSubmit;
+  }, [captureScreenshotAndSubmit]);
+
+  // Keep the selected-preset prompt in sync; expose a setter.
+  useEffect(() => {
+    const preset = SESSION_PRESETS.find((p) => p.id === sessionPresetId);
+    presetPromptRef.current = preset ? preset.prompt : "";
+  }, [sessionPresetId]);
+
+  const setSessionPreset = useCallback((id: string) => {
+    setSessionPresetIdState(id);
+    safeLocalStorage.setItem("session_preset_id", id);
+  }, []);
 
   // History browser: list past voice sessions and open one to continue it.
   const refreshPastConversations = useCallback(async () => {
@@ -917,15 +949,18 @@ export function useSystemAudio() {
   // hotkey attaches the shot to THIS voice conversation instead of the hidden
   // Ask box. Cleared when the popover is inactive so the Ask box works again.
   useEffect(() => {
-    if (capturing || paused) {
+    // Route the screenshot hotkey to the VOICE session whenever the Listen
+    // window is open (capturing, paused, OR just showing the chat). Uses a ref
+    // so it registers once per open/close and never de-registers on re-render.
+    if (capturing || paused || isPopoverOpen) {
       globalShortcuts.registerScreenshotCallbackPriority(() =>
-        captureScreenshotAndSubmit()
+        captureAndSubmitRef.current()
       );
       return () => {
         globalShortcuts.registerScreenshotCallbackPriority(null);
       };
     }
-  }, [capturing, paused, captureScreenshotAndSubmit]);
+  }, [capturing, paused, isPopoverOpen]);
 
   useEffect(() => {
     return () => {
@@ -1156,6 +1191,9 @@ export function useSystemAudio() {
     pastConversations,
     refreshPastConversations,
     loadConversation,
+    // Session presets (system prompt)
+    sessionPresetId,
+    setSessionPreset,
     // VAD configuration
     vadConfig,
     updateVadConfiguration,
