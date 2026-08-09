@@ -539,12 +539,21 @@ export function useSystemAudio() {
           return;
         }
       }
-      const base64: string = await invoke("capture_screenshot", {
-        screenId: null,
-      });
+      // NOTE: the correct Tauri command is "capture_to_base64" (the same one
+      // the Ask box uses). The previous "capture_screenshot" command does not
+      // exist in the Rust backend, so every capture silently failed.
+      const base64 = (await invoke("capture_to_base64")) as string;
+      if (!base64) {
+        setError("Не удалось сделать снимок экрана (пустой результат).");
+        return;
+      }
       setScreenshotImage(base64);
     } catch (err) {
       console.error("Failed to capture screenshot:", err);
+      setError(
+        "Ошибка снимка экрана: " +
+          (err instanceof Error ? err.message : String(err))
+      );
     } finally {
       setIsCapturingScreenshot(false);
     }
