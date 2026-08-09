@@ -1,5 +1,5 @@
 import { ChatConversation } from "@/types";
-import { Markdown } from "@/components";
+import { Markdown, CopyButton } from "@/components";
 import { BotIcon, HeadphonesIcon, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -30,20 +30,23 @@ const Bubble = ({
         isUser ? "border-l-2 border-primary/50 bg-primary/5" : "bg-background/60"
       )}
     >
-      <div className="flex items-center gap-1.5 mb-1">
-        {isUser ? (
-          <HeadphonesIcon className="h-3 w-3 text-primary" />
-        ) : (
-          <BotIcon className="h-3 w-3 text-muted-foreground" />
-        )}
-        <span
-          className={cn(
-            "text-[9px] font-medium uppercase tracking-wide",
-            isUser ? "text-primary" : "text-muted-foreground"
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-1.5">
+          {isUser ? (
+            <HeadphonesIcon className="h-3 w-3 text-primary" />
+          ) : (
+            <BotIcon className="h-3 w-3 text-muted-foreground" />
           )}
-        >
-          {isUser ? "Вопрос" : "Ответ"}
-        </span>
+          <span
+            className={cn(
+              "text-[9px] font-medium uppercase tracking-wide",
+              isUser ? "text-primary" : "text-muted-foreground"
+            )}
+          >
+            {isUser ? "Вопрос" : "Ответ"}
+          </span>
+        </div>
+        {!isUser && !streaming && content && <CopyButton content={content} />}
       </div>
       <div className="prose prose-sm max-w-none dark:prose-invert [&_img]:max-h-48 [&_img]:rounded-md [&_img]:border [&_img]:border-border/50">
         <Markdown>{content}</Markdown>

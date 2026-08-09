@@ -27,6 +27,7 @@ import { Warning } from "./Warning";
 import { useSystemAudioType } from "@/hooks";
 import { useApp } from "@/contexts";
 import { cn } from "@/lib/utils";
+import { SESSION_PRESETS } from "@/config";
 
 export const SystemAudio = (props: useSystemAudioType) => {
   const {
@@ -67,6 +68,8 @@ export const SystemAudio = (props: useSystemAudioType) => {
     pastConversations,
     refreshPastConversations,
     loadConversation,
+    sessionPresetId,
+    setSessionPreset,
     vadConfig,
     updateVadConfiguration,
     isRecordingInContinuousMode,
@@ -366,6 +369,25 @@ export const SystemAudio = (props: useSystemAudioType) => {
                         )}
                       </div>
                     )}
+
+                    {/* Session preset (system prompt) */}
+                    <div className="flex items-center gap-2 px-1">
+                      <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                        Пресет:
+                      </span>
+                      <select
+                        data-no-drag="true"
+                        value={sessionPresetId}
+                        onChange={(e) => setSessionPreset(e.target.value)}
+                        className="flex-1 h-7 px-2 text-[11px] rounded-md bg-background border border-input focus:outline-none focus:ring-1 focus:ring-ring"
+                      >
+                        {SESSION_PRESETS.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
                     {/* Type a question directly into the voice chat */}
                     <form
