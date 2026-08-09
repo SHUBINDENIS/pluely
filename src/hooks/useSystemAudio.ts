@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useWindowResize, useGlobalShortcuts } from ".";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useApp } from "@/contexts";
 import { fetchSTT, fetchAIResponse } from "@/lib/functions";
 import {
@@ -74,6 +75,10 @@ export function useSystemAudio() {
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [paused, setPaused] = useState(false);
+  // Ctrl+\ visibility cycle: 0 = all visible, 1 = dialog (popover) hidden but
+  // small panel visible + freed area click-through, 2 = panel hidden too +
+  // whole window click-through. Pressing Ctrl+\ cycles 0→1→2→0.
+  const [hideLevel, setHideLevel] = useState<number>(0);
   const [screenshotImage, setScreenshotImageState] = useState<string | null>(
     null
   );
@@ -917,15 +922,17 @@ export function useSystemAudio() {
 
   useEffect(() => {
     const shouldOpenPopover =
-      capturing ||
-      paused ||
-      setupRequired ||
-      isAIProcessing ||
-      !!lastAIResponse ||
-      !!error;
+      hideLevel === 0 &&
+      (capturing ||
+        paused ||
+        setupRequired ||
+        isAIProcessing ||
+        !!lastAIResponse ||
+        !!error);
     setIsPopoverOpen(shouldOpenPopover);
     resizeWindow(shouldOpenPopover);
   }, [
+    hideLevel,
     capturing,
     paused,
     setupRequired,
@@ -934,6 +941,34 @@ export function useSystemAudio() {
     error,
     resizeWindow,
   ]);
+
+  // Ctrl+\ cycles the visibility level (dialog → +panel → back). We own the
+  // whole 3-state machine here and ignore the event payload.
+  useEffect(() => {
+    const unlistenPromise = listen("toggle-window-visibility", () => {
+      setHideLevel((l) => (l + 1) % 3);
+    });
+    return () => {
+      unlistenPromise.then((f) => f()).catch(() => undefined);
+    };
+  }, []);
+
+  // Apply the visibility level to the OS window: real click-through at level 2
+  // (whole window), and force the dialog closed at levels 1–2 so the freed
+  // area sits outside the shrunk window and clicks pass through there.
+  useEffect(() => {
+    const win: any = getCurrentWindow();
+    // Real OS click-through at level 2 (guarded in case the API name differs).
+    try {
+      win.setIgnoreCursorEvents?.(hideLevel === 2)?.catch?.(() => undefined);
+    } catch {
+      /* ignore */
+    }
+    if (hideLevel >= 1) {
+      setIsPopoverOpen(false);
+      resizeWindow(false);
+    }
+  }, [hideLevel, resizeWindow]);
 
   useEffect(() => {
     globalShortcuts.registerSystemAudioCallback(async () => {
@@ -1154,6 +1189,8 @@ export function useSystemAudio() {
   return {
     capturing,
     paused,
+    hideLevel,
+    setHideLevel,
     isProcessing,
     isAIProcessing,
     lastTranscription,

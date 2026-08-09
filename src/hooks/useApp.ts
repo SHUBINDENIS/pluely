@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useTitles, useSystemAudio } from "@/hooks";
-import { listen } from "@tauri-apps/api/event";
 import { safeLocalStorage, migrateLocalStorageToSQLite } from "@/lib";
 import { getShortcutsConfig } from "@/lib/storage";
 import { invoke } from "@tauri-apps/api/core";
 
 export const useApp = () => {
   const systemAudio = useSystemAudio();
-  const [isHidden, setIsHidden] = useState(false);
+  // The Ctrl+\ visibility cycle is owned by useSystemAudio. Level 2 hides the
+  // small panel too (the whole app content).
+  const isHidden = systemAudio.hideLevel === 2;
   // Initialize title management
   useTitles();
 
@@ -72,38 +73,6 @@ export const useApp = () => {
     window.dispatchEvent(new CustomEvent("newConversation"));
   };
 
-  // WINDOWS HIDE/SHOW TOGGLE WINDOW WORKAROUND FOR SHORTCUTS
-  useEffect(() => {
-    const unlistenPromise = listen<boolean>(
-      "toggle-window-visibility",
-      (event) => {
-        const platform = navigator.platform.toLowerCase();
-        if (typeof event.payload === "boolean" && platform.includes("win")) {
-          setIsHidden(!event.payload);
-          // find popover open and close it
-          const popover = document.getElementById("popover-content");
-          // set display to none, change data-state to closed
-          if (popover) {
-            popover.style.setProperty("display", "none", "important");
-            // update the data-state to closed
-            popover.setAttribute("data-state", "closed");
-
-            // Also find and update the popover trigger's data-state
-            const popoverTriggers = document.querySelectorAll(
-              '[data-slot="popover-trigger"]'
-            );
-            popoverTriggers.forEach((trigger) => {
-              trigger.setAttribute("data-state", "closed");
-            });
-          }
-        }
-      }
-    );
-
-    return () => {
-      unlistenPromise.then((unlisten) => unlisten());
-    };
-  }, []);
 
   useEffect(() => {
     const handleShortcutRegistrationError = (
@@ -149,7 +118,6 @@ export const useApp = () => {
 
   return {
     isHidden,
-    setIsHidden,
     handleSelectConversation,
     handleNewConversation,
     systemAudio,
