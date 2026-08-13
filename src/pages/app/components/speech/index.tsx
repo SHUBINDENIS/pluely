@@ -58,6 +58,8 @@ export const SystemAudio = (props: useSystemAudioType) => {
     setContextSize,
     compressOlder,
     setCompressOlder,
+    unlimitedContext,
+    setUnlimitedContext,
     startNewConversation,
     conversation,
     resizeWindow,
@@ -544,6 +546,8 @@ export const SystemAudio = (props: useSystemAudioType) => {
                       setContextSize={setContextSize}
                       compressOlder={compressOlder}
                       setCompressOlder={setCompressOlder}
+                      unlimitedContext={unlimitedContext}
+                      setUnlimitedContext={setUnlimitedContext}
                     />
 
                     {/* Help/Keyboard Shortcuts */}
