@@ -23,6 +23,11 @@ function buildEnhancedSystemPrompt(baseSystemPrompt?: string): string {
     prompts.push(baseSystemPrompt);
   }
 
+  // Always answer in Russian, regardless of the question/context language.
+  prompts.push(
+    "ВАЖНО: всегда отвечай на русском языке, даже если вопрос, код или контекст на другом языке. Технические термины, названия и код можно оставлять как есть, но объяснения и текст ответа — только на русском."
+  );
+
   const lengthOption = RESPONSE_LENGTHS.find(
     (l) => l.id === responseSettings.responseLength
   );
