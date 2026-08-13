@@ -48,7 +48,10 @@ const Bubble = ({
         </div>
         {!isUser && !streaming && content && <CopyButton content={content} />}
       </div>
-      <div className="prose prose-sm max-w-none dark:prose-invert [&_img]:max-h-48 [&_img]:rounded-md [&_img]:border [&_img]:border-border/50">
+      <div
+        data-no-drag="true"
+        className="select-text cursor-text prose prose-sm max-w-none dark:prose-invert [&_img]:max-h-48 [&_img]:rounded-md [&_img]:border [&_img]:border-border/50"
+      >
         <Markdown>{content}</Markdown>
         {streaming && (
           <span className="inline-block w-2 h-4 bg-primary animate-pulse ml-1 align-middle" />
@@ -74,7 +77,10 @@ export const ResultsSection = ({
   }
 
   return (
-    <div className="rounded-lg border border-border/50 bg-muted/20 p-2 space-y-2 max-h-[52vh] overflow-y-auto">
+    <div
+      data-no-drag="true"
+      className="select-text rounded-lg border border-border/50 bg-muted/20 p-2 space-y-2 max-h-[52vh] overflow-y-auto"
+    >
       {/* In-progress turn (newest, on top) */}
       {isAIProcessing && (
         <>
