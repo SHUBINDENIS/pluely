@@ -78,9 +78,9 @@ export function useSystemAudio() {
   // small panel visible + freed area click-through, 2 = panel hidden too +
   // whole window click-through. Pressing Ctrl+\ cycles 0→1→2→0.
   const [hideLevel, setHideLevel] = useState<number>(0);
-  const [screenshotImage, setScreenshotImageState] = useState<string | null>(
-    null
-  );
+  // Multiple screenshots can be queued and sent together with the next question
+  // (voice, typed, or hotkey). Held as an array of raw base64 PNG strings.
+  const [screenshotImages, setScreenshotImagesState] = useState<string[]>([]);
   const [isCapturingScreenshot, setIsCapturingScreenshot] =
     useState<boolean>(false);
   // The user message currently being answered (voice transcription OR typed
@@ -113,6 +113,13 @@ export function useSystemAudio() {
     useState<boolean>(false);
   const [showQuickActions, setShowQuickActions] = useState<boolean>(true);
   const [vadConfig, setVadConfig] = useState<VadConfig>(DEFAULT_VAD_CONFIG);
+  // Accumulate mode (auto-detect): instead of sending each detected phrase to
+  // the AI immediately, buffer phrases so the speaker can finish a multi-part
+  // question, then send on demand. Refs mirror state for the async listener.
+  const [accumulateMode, setAccumulateModeState] = useState<boolean>(false);
+  const [accumulatedText, setAccumulatedTextState] = useState<string>("");
+  const accumulateModeRef = useRef<boolean>(false);
+  const accumulatedTextRef = useRef<string>("");
   const [recordingProgress, setRecordingProgress] = useState<number>(0); // For continuous mode
   const [isContinuousMode, setIsContinuousMode] = useState<boolean>(false);
   const [isRecordingInContinuousMode, setIsRecordingInContinuousMode] =
@@ -129,6 +136,14 @@ export function useSystemAudio() {
   // Context management states
   const [useSystemPrompt, setUseSystemPrompt] = useState<boolean>(true);
   const [contextContent, setContextContent] = useState<string>("");
+  // How many most-recent messages are kept verbatim in the AI context. Older
+  // messages beyond this are either dropped or folded into a compact local
+  // digest (see compressOlder) so long sessions stay cheap.
+  const [contextSize, setContextSizeState] = useState<number>(50);
+  const [compressOlder, setCompressOlderState] = useState<boolean>(true);
+  // Refs so the async speech→AI flow reads current values without re-subscribing.
+  const contextSizeRef = useRef<number>(50);
+  const compressOlderRef = useRef<boolean>(true);
 
   const {
     selectedSttProvider,
@@ -142,9 +157,9 @@ export function useSystemAudio() {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSavingRef = useRef<boolean>(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
-  // Mirror the current screenshot in a ref so the async speech→STT→AI flow
+  // Mirror the queued screenshots in a ref so the async speech→STT→AI flow
   // (a Tauri event listener) always reads the latest value, not a stale closure.
-  const screenshotRef = useRef<string | null>(null);
+  const screenshotImagesRef = useRef<string[]>([]);
   // Ref to the latest "capture screenshot and submit" action, so the global
   // screenshot-hotkey handler is registered ONCE and never churns/de-registers.
   const captureAndSubmitRef = useRef<() => Promise<void>>(async () => {});
@@ -163,6 +178,14 @@ export function useSystemAudio() {
         const parsed = JSON.parse(savedContext);
         setUseSystemPrompt(parsed.useSystemPrompt ?? true);
         setContextContent(parsed.contextContent ?? "");
+        if (typeof parsed.contextSize === "number") {
+          setContextSizeState(parsed.contextSize);
+          contextSizeRef.current = parsed.contextSize;
+        }
+        if (typeof parsed.compressOlder === "boolean") {
+          setCompressOlderState(parsed.compressOlder);
+          compressOlderRef.current = parsed.compressOlder;
+        }
       } catch (error) {
         console.error("Failed to load system audio context:", error);
       }
@@ -355,19 +378,30 @@ export function useSystemAudio() {
                 setLastTranscription(transcription);
                 setError("");
 
-                const effectiveSystemPrompt = useSystemPrompt
-                  ? presetPromptRef.current || systemPrompt || DEFAULT_SYSTEM_PROMPT
-                  : contextContent || DEFAULT_SYSTEM_PROMPT;
+                // Accumulate mode: buffer the phrase instead of sending, so the
+                // speaker can finish a multi-part question. The user sends the
+                // batch manually (sendAccumulated). Recording keeps running.
+                if (accumulateModeRef.current) {
+                  const next = `${accumulatedTextRef.current} ${transcription}`.trim();
+                  accumulatedTextRef.current = next;
+                  setAccumulatedTextState(next);
+                } else {
+                  const effectiveSystemPrompt = useSystemPrompt
+                    ? presetPromptRef.current ||
+                      systemPrompt ||
+                      DEFAULT_SYSTEM_PROMPT
+                    : contextContent || DEFAULT_SYSTEM_PROMPT;
 
-                const previousMessages = conversation.messages.map((msg) => {
-                  return { role: msg.role, content: msg.content };
-                });
+                  const previousMessages = conversation.messages.map((msg) => {
+                    return { role: msg.role, content: msg.content };
+                  });
 
-                await processWithAI(
-                  transcription,
-                  effectiveSystemPrompt,
-                  previousMessages
-                );
+                  await processWithAI(
+                    transcription,
+                    effectiveSystemPrompt,
+                    previousMessages
+                  );
+                }
               } else {
                 setError("Received empty transcription");
               }
@@ -399,13 +433,17 @@ export function useSystemAudio() {
     conversation.messages.length,
   ]);
 
-  // Context management functions
+  // Context management functions. Persists all context settings together;
+  // contextSize/compressOlder are read from refs so any single setter saves the
+  // full, current set.
   const saveContextSettings = useCallback(
     (usePrompt: boolean, content: string) => {
       try {
         const contextSettings = {
           useSystemPrompt: usePrompt,
           contextContent: content,
+          contextSize: contextSizeRef.current,
+          compressOlder: compressOlderRef.current,
         };
         safeLocalStorage.setItem(
           STORAGE_KEYS.SYSTEM_AUDIO_CONTEXT,
@@ -433,6 +471,53 @@ export function useSystemAudio() {
     },
     [useSystemPrompt, saveContextSettings]
   );
+
+  const setContextSize = useCallback(
+    (value: number) => {
+      const clamped = Math.max(5, Math.min(100, Math.round(value)));
+      contextSizeRef.current = clamped;
+      setContextSizeState(clamped);
+      saveContextSettings(useSystemPrompt, contextContent);
+    },
+    [useSystemPrompt, contextContent, saveContextSettings]
+  );
+
+  const setCompressOlder = useCallback(
+    (value: boolean) => {
+      compressOlderRef.current = value;
+      setCompressOlderState(value);
+      saveContextSettings(useSystemPrompt, contextContent);
+    },
+    [useSystemPrompt, contextContent, saveContextSettings]
+  );
+
+  // Fold older (beyond-window) messages into a compact, local digest — no extra
+  // API call, so long sessions stay cheap. `older` is newest-first; we reverse
+  // to chronological, truncate each turn, and cap the whole digest.
+  const buildOlderDigest = useCallback((older: Message[]): string => {
+    if (!older.length) return "";
+    const PER_MSG = 220; // chars kept per message
+    const MAX_DIGEST = 4000; // overall cap (~1k tokens)
+    const chrono = [...older].reverse();
+    const lines: string[] = [];
+    for (const m of chrono) {
+      const who = m.role === "assistant" ? "Ассистент" : "Пользователь";
+      const text = String(m.content)
+        .replace(/!\[[^\]]*\]\(data:[^)]*\)/g, "[скриншот]")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!text) continue;
+      const clipped =
+        text.length > PER_MSG ? text.slice(0, PER_MSG) + "…" : text;
+      lines.push(`${who}: ${clipped}`);
+    }
+    let digest = lines.join("\n");
+    if (digest.length > MAX_DIGEST) {
+      // Keep the most recent of the older block (end of the digest).
+      digest = "…" + digest.slice(digest.length - MAX_DIGEST);
+    }
+    return digest;
+  }, []);
 
   // Quick actions management
   const saveQuickActions = useCallback((actions: string[]) => {
@@ -560,11 +645,21 @@ export function useSystemAudio() {
     }
   }, [isContinuousMode, isRecordingInContinuousMode]);
 
-  // Screenshot: keep state and ref in sync so it can be attached to the very
-  // next voice question (see processWithAI) and shown in the UI.
-  const setScreenshotImage = useCallback((value: string | null) => {
-    screenshotRef.current = value;
-    setScreenshotImageState(value);
+  // Screenshot queue helpers: keep state and ref in sync so images can be
+  // attached to the next question (see processWithAI) and shown in the UI.
+  const addScreenshot = useCallback((value: string) => {
+    const next = [...screenshotImagesRef.current, value];
+    screenshotImagesRef.current = next;
+    setScreenshotImagesState(next);
+  }, []);
+  const removeScreenshot = useCallback((index: number) => {
+    const next = screenshotImagesRef.current.filter((_, i) => i !== index);
+    screenshotImagesRef.current = next;
+    setScreenshotImagesState(next);
+  }, []);
+  const clearScreenshots = useCallback(() => {
+    screenshotImagesRef.current = [];
+    setScreenshotImagesState([]);
   }, []);
 
   const captureScreenshot = useCallback(async () => {
@@ -592,7 +687,7 @@ export function useSystemAudio() {
         setError("Не удалось сделать снимок экрана (пустой результат).");
         return;
       }
-      setScreenshotImage(base64);
+      addScreenshot(base64);
     } catch (err) {
       console.error("Failed to capture screenshot:", err);
       setError(
@@ -602,7 +697,7 @@ export function useSystemAudio() {
     } finally {
       setIsCapturingScreenshot(false);
     }
-  }, [isCapturingScreenshot, setScreenshotImage]);
+  }, [isCapturingScreenshot, addScreenshot]);
 
   // Remove base64 data-URL images from message content before sending history
   // to the API, so screenshots are never re-sent as text (keeps token cost
@@ -625,9 +720,9 @@ export function useSystemAudio() {
 
       abortControllerRef.current = new AbortController();
 
-      // Grab any pending screenshot so this voice question is sent WITH the image
+      // Grab any queued screenshots so this question is sent WITH the images
       // (unified voice + screenshot context). Cleared in `finally` after the request.
-      const pendingImage = screenshotRef.current;
+      const pendingImages = screenshotImagesRef.current;
 
       try {
         setIsAIProcessing(true);
@@ -651,17 +746,28 @@ export function useSystemAudio() {
           return;
         }
 
+        // Context window: keep the most-recent N messages verbatim; fold any
+        // older ones into a compact local digest appended to the system prompt.
+        // previousMessages is newest-first, so the first N are the most recent.
+        const size = contextSizeRef.current;
+        const recent = previousMessages.slice(0, size);
+        const older = previousMessages.slice(size);
+        const digest = compressOlderRef.current ? buildOlderDigest(older) : "";
+        const effectivePrompt = digest
+          ? `${prompt}\n\n[Ранее в этой сессии — сжатая память о более старых сообщениях]:\n${digest}`
+          : prompt;
+
         try {
           for await (const chunk of fetchAIResponse({
             provider: usePluelyAPI ? undefined : provider,
             selectedProvider: selectedAIProvider,
-            systemPrompt: prompt,
-            history: previousMessages.map((m) => ({
+            systemPrompt: effectivePrompt,
+            history: recent.map((m) => ({
               ...m,
               content: stripDataUrlImages(m.content as string),
             })),
             userMessage: transcription,
-            imagesBase64: pendingImage ? [pendingImage] : [],
+            imagesBase64: pendingImages,
           })) {
             fullResponse += chunk;
             setLastAIResponse((prev) => prev + chunk);
@@ -678,10 +784,15 @@ export function useSystemAudio() {
               {
                 id: generateMessageId("user", timestamp),
                 role: "user" as const,
-                // Embed the screenshot as a data-URL image so it shows in the
-                // feed and is saved with the dialog. Stripped from API history.
-                content: pendingImage
-                  ? `${transcription}\n\n![screenshot](data:image/png;base64,${pendingImage})`
+                // Embed each screenshot as a data-URL image so they show in the
+                // feed and are saved with the dialog. Stripped from API history.
+                content: pendingImages.length
+                  ? `${transcription}\n\n${pendingImages
+                      .map(
+                        (img) =>
+                          `![screenshot](data:image/png;base64,${img})`
+                      )
+                      .join("\n\n")}`
                   : transcription,
                 timestamp,
               },
@@ -702,12 +813,12 @@ export function useSystemAudio() {
       } finally {
         setIsAIProcessing(false);
         setPendingUserMessage("");
-        // Screenshot has been consumed by this request; clear it.
-        if (pendingImage) setScreenshotImage(null);
+        // Screenshots have been consumed by this request; clear the queue.
+        if (pendingImages.length) clearScreenshots();
         // No auto-restart - user manually controls when to start next recording
       }
     },
-    [selectedAIProvider, allAiProviders, conversation.messages, setScreenshotImage]
+    [selectedAIProvider, allAiProviders, conversation.messages, clearScreenshots]
   );
 
   // Send a typed question into the SAME voice conversation (with any attached
@@ -735,12 +846,33 @@ export function useSystemAudio() {
     ]
   );
 
+  // Accumulate-mode controls (auto-detect). Toggle buffering, send the buffered
+  // question on demand, or clear it.
+  const setAccumulateMode = useCallback((value: boolean) => {
+    accumulateModeRef.current = value;
+    setAccumulateModeState(value);
+  }, []);
+
+  const clearAccumulated = useCallback(() => {
+    accumulatedTextRef.current = "";
+    setAccumulatedTextState("");
+  }, []);
+
+  const sendAccumulated = useCallback(async () => {
+    const text = accumulatedTextRef.current.trim();
+    if (!text) return;
+    // Clear first so incoming phrases don't append to what we're sending.
+    accumulatedTextRef.current = "";
+    setAccumulatedTextState("");
+    await submitText(text);
+  }, [submitText]);
+
   // Screenshot hotkey action: capture AND immediately send it to the active
   // session with a default analysis prompt, so the user gets an answer (and
   // the screenshot appears + is saved in the dialog).
   const captureScreenshotAndSubmit = useCallback(async () => {
     await captureScreenshot();
-    if (screenshotRef.current) {
+    if (screenshotImagesRef.current.length) {
       await submitText(
         "Проанализируй скриншот и помоги: дай точный, пошаговый ответ по существу."
       );
@@ -1245,9 +1377,10 @@ export function useSystemAudio() {
     stopCapture,
     pauseCapture,
     resumeCapture,
-    // Screenshot (attached to the next voice question for unified context)
-    screenshotImage,
-    setScreenshotImage,
+    // Screenshots (queue attached to the next question for unified context)
+    screenshotImages,
+    removeScreenshot,
+    clearScreenshots,
     isCapturingScreenshot,
     captureScreenshot,
     handleSetup,
@@ -1263,6 +1396,10 @@ export function useSystemAudio() {
     setUseSystemPrompt: updateUseSystemPrompt,
     contextContent,
     setContextContent: updateContextContent,
+    contextSize,
+    setContextSize,
+    compressOlder,
+    setCompressOlder,
     startNewConversation,
     // Window resize
     resizeWindow,
@@ -1287,6 +1424,12 @@ export function useSystemAudio() {
     // VAD configuration
     vadConfig,
     updateVadConfiguration,
+    // Accumulate mode (auto-detect: buffer phrases, send on demand)
+    accumulateMode,
+    setAccumulateMode,
+    accumulatedText,
+    sendAccumulated,
+    clearAccumulated,
     // Continuous recording
     isContinuousMode,
     isRecordingInContinuousMode,
