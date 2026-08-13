@@ -60,6 +60,11 @@ interface SettingsPanelProps {
   setUseSystemPrompt: (value: boolean) => void;
   contextContent: string;
   setContextContent: (content: string) => void;
+  // Context window size + compression
+  contextSize: number;
+  setContextSize: (value: number) => void;
+  compressOlder: boolean;
+  setCompressOlder: (value: boolean) => void;
 }
 
 export const SettingsPanel = ({
@@ -69,6 +74,10 @@ export const SettingsPanel = ({
   setUseSystemPrompt,
   contextContent,
   setContextContent,
+  contextSize,
+  setContextSize,
+  compressOlder,
+  setCompressOlder,
 }: SettingsPanelProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -232,6 +241,46 @@ export const SettingsPanel = ({
               <Switch
                 checked={useSystemPrompt}
                 onCheckedChange={setUseSystemPrompt}
+              />
+            </div>
+
+            {/* Context window size */}
+            <div className="space-y-2">
+              <Label className="text-xs font-medium flex items-center justify-between">
+                <span>Размер контекста</span>
+                <span className="text-muted-foreground font-normal">
+                  {contextSize} сообщ.
+                </span>
+              </Label>
+              <Slider
+                value={[contextSize]}
+                onValueChange={([value]) => setContextSize(value)}
+                min={10}
+                max={100}
+                step={5}
+                className="w-full"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Сколько последних сообщений уходит в ИИ полностью. Больше —
+                точнее, но дороже по токенам.
+              </p>
+            </div>
+
+            {/* Compression of older messages */}
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex-1">
+                <Label className="text-xs font-medium">
+                  Сжимать старые сообщения
+                </Label>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {compressOlder
+                    ? "Старше лимита — в краткой сводке (дёшево)"
+                    : "Старше лимита — отбрасываются"}
+                </p>
+              </div>
+              <Switch
+                checked={compressOlder}
+                onCheckedChange={setCompressOlder}
               />
             </div>
 

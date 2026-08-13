@@ -44,8 +44,8 @@ export const SystemAudio = (props: useSystemAudioType) => {
     paused,
     hideLevel,
     setHideLevel,
-    screenshotImage,
-    setScreenshotImage,
+    screenshotImages,
+    removeScreenshot,
     isCapturingScreenshot,
     captureScreenshot,
     isPopoverOpen,
@@ -54,6 +54,10 @@ export const SystemAudio = (props: useSystemAudioType) => {
     setUseSystemPrompt,
     contextContent,
     setContextContent,
+    contextSize,
+    setContextSize,
+    compressOlder,
+    setCompressOlder,
     startNewConversation,
     conversation,
     resizeWindow,
@@ -74,6 +78,11 @@ export const SystemAudio = (props: useSystemAudioType) => {
     setSessionPreset,
     vadConfig,
     updateVadConfiguration,
+    accumulateMode,
+    setAccumulateMode,
+    accumulatedText,
+    sendAccumulated,
+    clearAccumulated,
     isRecordingInContinuousMode,
     recordingProgress,
     manualStopAndSend,
@@ -211,14 +220,15 @@ export const SystemAudio = (props: useSystemAudioType) => {
                   {hasActiveLicense && !setupRequired && supportsImages && (
                     <Button
                       size="sm"
-                      variant={screenshotImage ? "default" : "outline"}
+                      variant={screenshotImages.length ? "default" : "outline"}
                       onClick={captureScreenshot}
                       disabled={isCapturingScreenshot}
                       className={cn(
                         "h-6 text-[10px] gap-1 px-2",
-                        screenshotImage && "bg-primary text-primary-foreground"
+                        screenshotImages.length &&
+                          "bg-primary text-primary-foreground"
                       )}
-                      title="Скриншот к следующему вопросу (или Ctrl+Shift+S — отправить сразу)"
+                      title="Добавить скриншот к следующему вопросу (можно несколько; Ctrl+Shift+S — отправить сразу)"
                     >
                       {isCapturingScreenshot ? (
                         <LoaderIcon className="w-3 h-3 animate-spin" />
@@ -226,6 +236,11 @@ export const SystemAudio = (props: useSystemAudioType) => {
                         <CameraIcon className="w-3 h-3" />
                       )}
                       Screenshot
+                      {screenshotImages.length > 0 && (
+                        <span className="ml-0.5 rounded-full bg-background/30 px-1 text-[9px] font-semibold">
+                          {screenshotImages.length}
+                        </span>
+                      )}
                     </Button>
                   )}
 
@@ -283,30 +298,33 @@ export const SystemAudio = (props: useSystemAudioType) => {
 
             <ScrollArea className="flex-1 min-h-0" ref={scrollAreaRef}>
               <div className="p-2 space-y-2">
-                {/* Screenshot Preview */}
-                {screenshotImage && (
-                  <div className="flex items-center gap-2 p-2 rounded-lg bg-primary/5 border border-primary/20">
-                    <img
-                      src={`data:image/png;base64,${screenshotImage}`}
-                      alt="Screenshot"
-                      className="h-12 w-20 object-cover rounded"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[10px] font-medium">
-                        Скриншот прикреплён
-                      </p>
-                      <p className="text-[9px] text-muted-foreground">
-                        Уйдёт со следующим вопросом (Ctrl+Shift+S — сразу)
-                      </p>
+                {/* Screenshot Previews (queue) */}
+                {screenshotImages.length > 0 && (
+                  <div className="p-2 rounded-lg bg-primary/5 border border-primary/20 space-y-1.5">
+                    <p className="text-[10px] font-medium">
+                      Скриншотов прикреплено: {screenshotImages.length} — уйдут со
+                      следующим вопросом
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {screenshotImages.map((img, i) => (
+                        <div key={i} className="relative">
+                          <img
+                            src={`data:image/png;base64,${img}`}
+                            alt={`Screenshot ${i + 1}`}
+                            className="h-12 w-20 object-cover rounded border border-border/50"
+                          />
+                          <button
+                            type="button"
+                            data-no-drag="true"
+                            onClick={() => removeScreenshot(i)}
+                            className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-background border border-border flex items-center justify-center hover:bg-destructive hover:text-destructive-foreground"
+                            title="Убрать этот скриншот"
+                          >
+                            <XIcon className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-5 w-5"
-                      onClick={() => setScreenshotImage(null)}
-                    >
-                      <XIcon className="h-3 w-3" />
-                    </Button>
                   </div>
                 )}
 
@@ -423,6 +441,76 @@ export const SystemAudio = (props: useSystemAudioType) => {
                       </Button>
                     </form>
 
+                    {/* Auto-detect: accumulate / send-on-demand control */}
+                    {isVadMode && (
+                      <div className="rounded-lg border border-border/50 bg-muted/30 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex-1">
+                            <p className="text-xs font-medium">
+                              Копить фразы перед отправкой
+                            </p>
+                            <p className="text-[10px] text-muted-foreground">
+                              {accumulateMode
+                                ? "Фразы копятся — отправьте, когда вопрос задан полностью"
+                                : "Каждая фраза уходит сразу, как закончится"}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            data-no-drag="true"
+                            role="switch"
+                            aria-checked={accumulateMode}
+                            onClick={() => setAccumulateMode(!accumulateMode)}
+                            className={cn(
+                              "relative h-5 w-9 flex-shrink-0 rounded-full transition-colors",
+                              accumulateMode ? "bg-primary" : "bg-muted-foreground/30"
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "absolute top-0.5 h-4 w-4 rounded-full bg-background transition-transform",
+                                accumulateMode ? "translate-x-4" : "translate-x-0.5"
+                              )}
+                            />
+                          </button>
+                        </div>
+
+                        {accumulateMode && (
+                          <div className="space-y-2">
+                            <div className="rounded-md bg-background/60 border border-border/50 p-2 text-[11px] min-h-[2.5rem] max-h-24 overflow-y-auto">
+                              {accumulatedText ? (
+                                accumulatedText
+                              ) : (
+                                <span className="text-muted-foreground">
+                                  Накопленный вопрос появится здесь…
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="flex-1 h-7 text-[10px] gap-1"
+                                onClick={clearAccumulated}
+                                disabled={!accumulatedText || isAIProcessing}
+                              >
+                                <XIcon className="w-3 h-3" />
+                                Очистить
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="flex-1 h-7 text-[10px]"
+                                onClick={sendAccumulated}
+                                disabled={!accumulatedText || isAIProcessing}
+                              >
+                                Отправить вопрос
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Recording Panel */}
                     <RecordingPanel
                       isVadMode={isVadMode}
@@ -452,6 +540,10 @@ export const SystemAudio = (props: useSystemAudioType) => {
                       setUseSystemPrompt={setUseSystemPrompt}
                       contextContent={contextContent}
                       setContextContent={setContextContent}
+                      contextSize={contextSize}
+                      setContextSize={setContextSize}
+                      compressOlder={compressOlder}
+                      setCompressOlder={setCompressOlder}
                     />
 
                     {/* Help/Keyboard Shortcuts */}
