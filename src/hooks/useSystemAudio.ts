@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useWindowResize, useGlobalShortcuts } from ".";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useApp } from "@/contexts";
 import { fetchSTT, fetchAIResponse } from "@/lib/functions";
 import {
@@ -149,6 +148,10 @@ export function useSystemAudio() {
   // Ref to the latest "capture screenshot and submit" action, so the global
   // screenshot-hotkey handler is registered ONCE and never churns/de-registers.
   const captureAndSubmitRef = useRef<() => Promise<void>>(async () => {});
+  // Mirror "a recording is active" for the speech-detected listener, whose
+  // effect closure would otherwise capture a stale isContinuousMode and could
+  // drop a manual Stop & Send result.
+  const recordingActiveRef = useRef<boolean>(false);
 
   // Load context settings and VAD config from localStorage on mount
   useEffect(() => {
@@ -269,6 +272,27 @@ export function useSystemAudio() {
     };
   }, []);
 
+  // Drive the manual-recording progress from a wall-clock timer while a
+  // continuous recording is active. The backend only emits "recording-progress"
+  // as audio samples arrive, so during initial silence (or a loopback backend
+  // that stays quiet until sound plays) the counter would sit at "Recording 0s"
+  // and look broken. A JS timer guarantees the elapsed time is always visible.
+  useEffect(() => {
+    if (!isRecordingInContinuousMode) return;
+    const startedAt = Date.now();
+    setRecordingProgress(0);
+    const id = setInterval(() => {
+      setRecordingProgress(Math.floor((Date.now() - startedAt) / 1000));
+    }, 500);
+    return () => clearInterval(id);
+  }, [isRecordingInContinuousMode]);
+
+  // Keep the recording-active ref current for the speech-detected listener.
+  useEffect(() => {
+    recordingActiveRef.current =
+      capturing || isContinuousMode || isRecordingInContinuousMode;
+  }, [capturing, isContinuousMode, isRecordingInContinuousMode]);
+
   // Handle single speech detection event (both VAD and continuous modes)
   useEffect(() => {
     let speechUnlisten: (() => void) | undefined;
@@ -277,7 +301,9 @@ export function useSystemAudio() {
       try {
         speechUnlisten = await listen("speech-detected", async (event) => {
           try {
-            if (!capturing) return;
+            // Accept the audio if we're capturing OR a manual recording is
+            // active (ref avoids a stale-closure drop of Stop & Send results).
+            if (!capturing && !recordingActiveRef.current) return;
 
             const base64Audio = event.payload as string;
             // Convert to blob
@@ -486,14 +512,28 @@ export function useSystemAudio() {
       setRecordingProgress(0);
       setError("");
 
+      // Clean up any stale/prior capture task first (mirrors the VAD path).
+      // Without this a leftover stream_task makes the backend reject the new
+      // capture with "Capture already running", so the manual recording never
+      // starts and the timer sits at "Recording 0s".
+      try {
+        await invoke<string>("stop_system_audio_capture");
+      } catch {
+        /* no active capture to stop — expected on a clean start */
+      }
+
       const deviceId =
         selectedAudioDevices.output.id !== "default"
           ? selectedAudioDevices.output.id
           : null;
 
+      // Manual recording must always run the continuous (non-VAD) backend path,
+      // regardless of the persisted vadConfig.enabled flag, so force it here.
+      const continuousConfig = { ...vadConfig, enabled: false };
+
       // Start a new continuous recording session
       await invoke<string>("start_system_audio_capture", {
-        vadConfig: vadConfig,
+        vadConfig: continuousConfig,
         deviceId: deviceId,
       });
     } catch (err) {
@@ -877,15 +917,19 @@ export function useSystemAudio() {
   // Manual stop for continuous recording
   const manualStopAndSend = useCallback(async () => {
     try {
-      if (!isContinuousMode) {
-        console.warn("Not in continuous mode");
+      // Proceed whenever a recording is actually in progress. (Previously this
+      // only checked isContinuousMode, so any state drift silently dropped the
+      // Stop & Send click — the "отправка не работает" symptom.)
+      if (!isContinuousMode && !isRecordingInContinuousMode) {
+        console.warn("No active manual recording to stop");
         return;
       }
 
       // Show processing state immediately
       setIsProcessing(true);
 
-      // Trigger manual stop event
+      // Trigger manual stop event → backend flushes the buffer and emits
+      // "speech-detected", which runs STT + AI in the shared listener.
       await invoke("manual_stop_continuous");
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -893,7 +937,7 @@ export function useSystemAudio() {
       setIsProcessing(false); // Clear processing state on error
       console.error("Manual stop error:", err);
     }
-  }, [isContinuousMode]);
+  }, [isContinuousMode, isRecordingInContinuousMode]);
 
   const handleSetup = useCallback(async () => {
     try {
@@ -957,13 +1001,13 @@ export function useSystemAudio() {
   // (whole window), and force the dialog closed at levels 1–2 so the freed
   // area sits outside the shrunk window and clicks pass through there.
   useEffect(() => {
-    const win: any = getCurrentWindow();
-    // Real OS click-through at level 2 (guarded in case the API name differs).
-    try {
-      win.setIgnoreCursorEvents?.(hideLevel === 2)?.catch?.(() => undefined);
-    } catch {
-      /* ignore */
-    }
+    // Real OS-level click-through via a dedicated Rust command. The JS
+    // `setIgnoreCursorEvents` did not take effect on this transparent overlay,
+    // so at level 2 the hidden strip still swallowed clicks. The backend
+    // `set_ignore_cursor_events` is reliable.
+    invoke("set_click_through", { ignore: hideLevel === 2 }).catch(() =>
+      undefined
+    );
     if (hideLevel >= 1) {
       setIsPopoverOpen(false);
       resizeWindow(false);
