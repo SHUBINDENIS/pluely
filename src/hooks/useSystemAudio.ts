@@ -8,6 +8,7 @@ import {
   DEFAULT_QUICK_ACTIONS,
   DEFAULT_SYSTEM_PROMPT,
   SESSION_PRESETS,
+  SPEECH_TO_TEXT_PROVIDERS,
   STORAGE_KEYS,
 } from "@/config";
 import {
@@ -174,6 +175,12 @@ export function useSystemAudio() {
   // Mirror continuous(manual)-mode so the speech-detected listener never applies
   // accumulate buffering to a manual Stop & Send (accumulate is VAD-only).
   const isContinuousModeRef = useRef<boolean>(false);
+  // Derives an STT provider from the selected AI provider's key when no STT
+  // provider is configured — so Groq/OpenAI users get working voice without a
+  // separate STT setup (their AI key also works for Whisper on the same host).
+  const deriveSttRef = useRef<
+    () => { provider: any; selectedProvider: any } | null
+  >(() => null);
 
   // Load context settings and VAD config from localStorage on mount
   useEffect(() => {
@@ -328,6 +335,61 @@ export function useSystemAudio() {
     isContinuousModeRef.current = isContinuousMode;
   }, [capturing, isContinuousMode, isRecordingInContinuousMode]);
 
+  // Keep the AI→STT derivation current (reads latest AI provider + key).
+  useEffect(() => {
+    deriveSttRef.current = () => {
+      const aiProv = allAiProviders.find(
+        (p) => p.id === selectedAIProvider.provider
+      );
+      if (!aiProv) return null;
+      const curl = String((aiProv as any).curl || "");
+      const vars = (selectedAIProvider.variables || {}) as Record<
+        string,
+        string
+      >;
+      // The AI provider's API key (Groq keys start with gsk_, OpenAI with sk-).
+      const key =
+        vars.API_KEY ||
+        vars.api_key ||
+        (Object.values(vars).find((v) =>
+          /^(gsk_|sk-)/.test(String(v || ""))
+        ) as string | undefined);
+      if (!key) return null;
+
+      const isGroq =
+        curl.includes("api.groq.com") || selectedAIProvider.provider === "groq";
+      const isOpenAI =
+        curl.includes("api.openai.com") ||
+        selectedAIProvider.provider === "openai";
+
+      if (isGroq) {
+        const tpl = SPEECH_TO_TEXT_PROVIDERS.find((p) => p.id === "groq");
+        if (!tpl) return null;
+        return {
+          provider: tpl,
+          selectedProvider: {
+            provider: "groq",
+            variables: { API_KEY: key, MODEL: "whisper-large-v3-turbo" },
+          },
+        };
+      }
+      if (isOpenAI) {
+        const tpl = SPEECH_TO_TEXT_PROVIDERS.find(
+          (p) => p.id === "openai-whisper"
+        );
+        if (!tpl) return null;
+        return {
+          provider: tpl,
+          selectedProvider: {
+            provider: "openai-whisper",
+            variables: { API_KEY: key, MODEL: "whisper-1" },
+          },
+        };
+      }
+      return null;
+    };
+  }, [selectedAIProvider, allAiProviders]);
+
   // Handle single speech detection event (both VAD and continuous modes)
   useEffect(() => {
     let speechUnlisten: (() => void) | undefined;
@@ -350,18 +412,28 @@ export function useSystemAudio() {
             const audioBlob = new Blob([bytes], { type: "audio/wav" });
 
             const usePluelyAPI = await shouldUsePluelyAPI();
-            if (!selectedSttProvider.provider && !usePluelyAPI) {
-              setError("No speech provider selected.");
-              return;
-            }
 
-            const providerConfig = allSttProviders.find(
-              (p) => p.id === selectedSttProvider.provider
-            );
+            // Resolve which STT provider to use. Priority: a configured STT
+            // provider → Pluely API → an STT derived from the AI provider's key
+            // (Groq/OpenAI). Only error if none of these are available.
+            let providerConfig: any = selectedSttProvider.provider
+              ? allSttProviders.find(
+                  (p) => p.id === selectedSttProvider.provider
+                )
+              : undefined;
+            let sttSelected: any = selectedSttProvider;
 
-            if (!providerConfig && !usePluelyAPI) {
-              setError("Speech provider config not found.");
-              return;
+            if (!usePluelyAPI && !providerConfig) {
+              const derived = deriveSttRef.current();
+              if (derived) {
+                providerConfig = derived.provider;
+                sttSelected = derived.selectedProvider;
+              } else {
+                setError(
+                  "Нет провайдера распознавания речи. Открой Dev Space → STT и добавь Groq/OpenAI Whisper с API-ключом (или включи Pluely API)."
+                );
+                return;
+              }
             }
 
             setIsProcessing(true);
@@ -369,7 +441,7 @@ export function useSystemAudio() {
             // Add timeout wrapper for STT request (30 seconds)
             const sttPromise = fetchSTT({
               provider: providerConfig,
-              selectedProvider: selectedSttProvider,
+              selectedProvider: sttSelected,
               audio: audioBlob,
             });
 
