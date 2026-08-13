@@ -211,7 +211,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
                   />
                 )}
                 {setupRequired && (
-                  <h2 className="font-semibold text-sm">Setup Required</h2>
+                  <h2 className="font-semibold text-sm">Нужна настройка</h2>
                 )}
 
                 {/* Action Buttons */}
@@ -235,7 +235,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
                       ) : (
                         <CameraIcon className="w-3 h-3" />
                       )}
-                      Screenshot
+                      Скриншот
                       {screenshotImages.length > 0 && (
                         <span className="ml-0.5 rounded-full bg-background/30 px-1 text-[9px] font-semibold">
                           {screenshotImages.length}
@@ -268,7 +268,7 @@ export const SystemAudio = (props: useSystemAudioType) => {
                       title="Новая сессия (в этом же окне)"
                     >
                       <PlusIcon className="w-3 h-3" />
-                      New
+                      Новая
                     </Button>
                   )}
 

@@ -28,7 +28,7 @@ export const Warning = ({ isVadMode }: WarningProps) => {
       >
         <div className="flex items-center gap-2">
           <InfoIcon className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className="text-xs font-medium">Help & Keyboard Shortcuts</span>
+          <span className="text-xs font-medium">Помощь и горячие клавиши</span>
         </div>
         <ChevronDownIcon
           className={cn(
@@ -49,12 +49,12 @@ export const Warning = ({ isVadMode }: WarningProps) => {
             )}
             <div>
               <p className="text-xs font-medium">
-                {isVadMode ? "Auto-detect Mode" : "Manual Mode"}
+                {isVadMode ? "Режим автоопределения" : "Ручной режим"}
               </p>
               <p className="text-[10px] text-muted-foreground mt-0.5">
                 {isVadMode
-                  ? "Speech is automatically detected from system audio. When someone speaks, it will be captured and transcribed."
-                  : "Press the record button or use keyboard shortcuts to manually control recording."}
+                  ? "Речь распознаётся автоматически из системного звука. Как только кто-то говорит — фраза захватывается и распознаётся."
+                  : "Управляй записью вручную кнопкой или горячими клавишами."}
               </p>
             </div>
           </div>
@@ -64,18 +64,18 @@ export const Warning = ({ isVadMode }: WarningProps) => {
             <div className="flex items-center gap-1.5">
               <KeyboardIcon className="w-3 h-3 text-muted-foreground" />
               <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
-                Keyboard Shortcuts
+                Горячие клавиши
               </span>
             </div>
             <div className="grid grid-cols-2 gap-2 text-[10px]">
               <div className="flex items-center justify-between p-1.5 rounded bg-muted/50">
-                <span className="text-muted-foreground">Scroll down</span>
+                <span className="text-muted-foreground">Прокрутка вниз</span>
                 <kbd className="px-1.5 py-0.5 rounded bg-background border border-border font-mono">
                   ↓
                 </kbd>
               </div>
               <div className="flex items-center justify-between p-1.5 rounded bg-muted/50">
-                <span className="text-muted-foreground">Scroll up</span>
+                <span className="text-muted-foreground">Прокрутка вверх</span>
                 <kbd className="px-1.5 py-0.5 rounded bg-background border border-border font-mono">
                   ↑
                 </kbd>
@@ -83,19 +83,19 @@ export const Warning = ({ isVadMode }: WarningProps) => {
               {!isVadMode && (
                 <>
                   <div className="flex items-center justify-between p-1.5 rounded bg-muted/50">
-                    <span className="text-muted-foreground">Start/Stop</span>
+                    <span className="text-muted-foreground">Старт/Стоп</span>
                     <kbd className="px-1.5 py-0.5 rounded bg-background border border-border font-mono">
                       Enter
                     </kbd>
                   </div>
                   <div className="flex items-center justify-between p-1.5 rounded bg-muted/50">
-                    <span className="text-muted-foreground">Start record</span>
+                    <span className="text-muted-foreground">Начать запись</span>
                     <kbd className="px-1.5 py-0.5 rounded bg-background border border-border font-mono">
                       Space
                     </kbd>
                   </div>
                   <div className="flex items-center justify-between p-1.5 rounded bg-muted/50">
-                    <span className="text-muted-foreground">Discard</span>
+                    <span className="text-muted-foreground">Отменить</span>
                     <kbd className="px-1.5 py-0.5 rounded bg-background border border-border font-mono">
                       Esc
                     </kbd>
@@ -103,7 +103,7 @@ export const Warning = ({ isVadMode }: WarningProps) => {
                 </>
               )}
               <div className="flex items-center justify-between p-1.5 rounded bg-muted/50">
-                <span className="text-muted-foreground">Toggle view</span>
+                <span className="text-muted-foreground">Показать/скрыть</span>
                 <kbd className="px-1.5 py-0.5 rounded bg-background border border-border font-mono">
                   {modKey}+K
                 </kbd>
@@ -116,22 +116,20 @@ export const Warning = ({ isVadMode }: WarningProps) => {
             <div className="flex items-center gap-1.5">
               <CameraIcon className="w-3 h-3 text-muted-foreground" />
               <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
-                Screenshot Feature
+                Скриншоты
               </span>
             </div>
             <div className="p-2 rounded-md bg-primary/5 text-[10px] text-muted-foreground space-y-1">
               <p>
-                Screenshot: Captures your current screen and attaches it to your
-                next transcription.
+                Кнопка «Скриншот» делает снимок экрана и прикрепляет его к
+                следующему вопросу. Можно добавить несколько.
               </p>
               <p>
-                The AI will receive both the transcribed audio and the
-                screenshot image, allowing it to provide context-aware responses
-                based on what you're viewing.
+                ИИ получит и распознанный текст, и картинки — и ответит с учётом
+                того, что у тебя на экране.
               </p>
               <p className="text-[9px] opacity-70">
-                The screenshot is automatically cleared after each message is
-                sent.
+                Скриншоты автоматически очищаются после отправки сообщения.
               </p>
             </div>
           </div>
@@ -139,20 +137,20 @@ export const Warning = ({ isVadMode }: WarningProps) => {
           {/* Tips */}
           <div className="text-[10px] text-muted-foreground space-y-1 pt-2 border-t border-border/50">
             <p>
-              <strong>Tip:</strong> Use Auto-detect for hands-free operation
-              during interviews.
+              <strong>Совет:</strong> Автоопределение удобно для работы без рук
+              во время собеседования или экзамена.
             </p>
             <p>
-              <strong>Tip:</strong> Use Manual mode when you need precise
-              control over what gets transcribed.
+              <strong>Совет:</strong> Ручной режим — когда нужен точный контроль
+              над тем, что отправляется.
             </p>
             <p>
-              <strong>Tip:</strong> Quick Actions let you send follow-up prompts
-              with one click.
+              <strong>Совет:</strong> Быстрые действия отправляют уточняющий
+              запрос в один клик.
             </p>
             <p>
-              <strong>Tip:</strong> Use Screenshot to share your screen context
-              with the AI for more relevant responses.
+              <strong>Совет:</strong> Скриншот делится тем, что у тебя на экране,
+              чтобы ответ был точнее.
             </p>
           </div>
         </div>

@@ -27,25 +27,29 @@ import {
 } from "@/lib/platform-instructions";
 import { cn } from "@/lib/utils";
 
-// Sensitivity presets for simpler UX
+// Recognition "modes" — bundles that tune both sensitivity and how quickly a
+// phrase is sent (silence duration), for common scenarios.
 const SENSITIVITY_PRESETS = {
-  low: {
-    sensitivity_rms: 0.015,
-    noise_gate_threshold: 0.005,
-    label: "Low",
-    description: "Only picks up clear, loud speech",
+  fast: {
+    sensitivity_rms: 0.012,
+    noise_gate_threshold: 0.003,
+    silence_chunks: 30, // ~0.7s — отправляет быстро
+    label: "Быстро",
+    description: "Отправляет фразу почти сразу после паузы",
   },
   normal: {
     sensitivity_rms: 0.012,
     noise_gate_threshold: 0.003,
-    label: "Normal",
-    description: "Balanced for typical conversations",
+    silence_chunks: 45, // ~1.0s
+    label: "Обычно",
+    description: "Сбалансированный режим для обычной речи",
   },
-  high: {
-    sensitivity_rms: 0.008,
-    noise_gate_threshold: 0.002,
-    label: "High",
-    description: "Picks up quieter speech",
+  careful: {
+    sensitivity_rms: 0.015,
+    noise_gate_threshold: 0.005,
+    silence_chunks: 70, // ~1.6s — ждёт дольше
+    label: "Осторожно",
+    description: "Дольше ждёт паузу — удобно для шумных мест и длинных фраз",
   },
 } as const;
 
@@ -83,13 +87,14 @@ export const SettingsPanel = ({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<string>("");
 
-  // Determine current sensitivity preset based on values
+  // Determine current mode based on values (sensitivity + silence duration).
   const getCurrentPreset = (): SensitivityPreset | "custom" => {
     for (const [key, preset] of Object.entries(SENSITIVITY_PRESETS)) {
       if (
         Math.abs(vadConfig.sensitivity_rms - preset.sensitivity_rms) < 0.001 &&
         Math.abs(vadConfig.noise_gate_threshold - preset.noise_gate_threshold) <
-          0.001
+          0.001 &&
+        vadConfig.silence_chunks === preset.silence_chunks
       ) {
         return key as SensitivityPreset;
       }
@@ -105,6 +110,7 @@ export const SettingsPanel = ({
       ...vadConfig,
       sensitivity_rms: presetValues.sensitivity_rms,
       noise_gate_threshold: presetValues.noise_gate_threshold,
+      silence_chunks: presetValues.silence_chunks,
     });
   };
 
@@ -141,7 +147,7 @@ export const SettingsPanel = ({
       >
         <div className="flex items-center gap-2">
           <SettingsIcon className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className="text-xs font-medium">Settings</span>
+          <span className="text-xs font-medium">Настройки</span>
         </div>
         <ChevronDownIcon
           className={cn(
@@ -157,14 +163,14 @@ export const SettingsPanel = ({
           {/* Recording Settings Section */}
           <div className="space-y-3">
             <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              Recording
+              Запись
             </h4>
 
-            {/* Sensitivity Presets - Only for VAD mode */}
+            {/* Recognition modes - Only for VAD mode */}
             {vadConfig.enabled && (
               <div className="space-y-2">
                 <Label className="text-xs font-medium">
-                  Speech Sensitivity
+                  Режим распознавания
                 </Label>
                 <div className="flex gap-2">
                   {(
@@ -190,7 +196,7 @@ export const SettingsPanel = ({
                 </div>
                 <p className="text-[10px] text-muted-foreground">
                   {currentPreset === "custom"
-                    ? "Custom sensitivity values"
+                    ? "Свои значения (настроено вручную ниже)"
                     : SENSITIVITY_PRESETS[currentPreset as SensitivityPreset]
                         .description}
                 </p>
@@ -201,9 +207,9 @@ export const SettingsPanel = ({
             {!vadConfig.enabled && (
               <div className="space-y-2">
                 <Label className="text-xs font-medium flex items-center justify-between">
-                  <span>Max Recording Duration</span>
+                  <span>Макс. длительность записи</span>
                   <span className="text-muted-foreground font-normal">
-                    {Math.round(vadConfig.max_recording_duration_secs / 60)} min
+                    {Math.round(vadConfig.max_recording_duration_secs / 60)} мин
                   </span>
                 </Label>
                 <Slider
@@ -226,16 +232,18 @@ export const SettingsPanel = ({
           {/* Context Section */}
           <div className="space-y-3 pt-3 border-t border-border/50">
             <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              AI Context
+              Контекст ИИ
             </h4>
 
             <div className="flex items-center justify-between gap-4">
               <div className="flex-1">
-                <Label className="text-xs font-medium">Use System Prompt</Label>
+                <Label className="text-xs font-medium">
+                  Использовать системный промпт
+                </Label>
                 <p className="text-[10px] text-muted-foreground mt-0.5">
                   {useSystemPrompt
-                    ? "Using default prompt from settings"
-                    : "Using custom context below"}
+                    ? "Промпт из пресета/настроек"
+                    : "Свой контекст ниже"}
                 </p>
               </div>
               <Switch
@@ -294,12 +302,12 @@ export const SettingsPanel = ({
                   >
                     <SelectTrigger className="w-auto h-7 text-xs">
                       <WandIcon className="w-3 h-3 mr-1.5" />
-                      <SelectValue placeholder="Templates" />
+                      <SelectValue placeholder="Шаблоны" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectGroup>
                         <SelectLabel className="text-xs py-1">
-                          Quick-fill a template
+                          Быстрый шаблон
                         </SelectLabel>
                         {PROMPT_TEMPLATES.map((template) => (
                           <SelectItem
@@ -315,7 +323,7 @@ export const SettingsPanel = ({
                   </Select>
                 </div>
                 <Textarea
-                  placeholder="Enter custom system prompt and context..."
+                  placeholder="Свой системный промпт и контекст…"
                   value={contextContent}
                   onChange={(e) => setContextContent(e.target.value)}
                   className="min-h-24 resize-none text-xs"
@@ -331,7 +339,7 @@ export const SettingsPanel = ({
               className="w-full flex items-center justify-between text-xs text-muted-foreground hover:text-foreground transition-colors"
               onClick={() => setShowAdvanced(!showAdvanced)}
             >
-              <span>Advanced Settings</span>
+              <span>Расширенные настройки</span>
               {showAdvanced ? (
                 <ChevronUpIcon className="w-3 h-3" />
               ) : (
@@ -346,7 +354,7 @@ export const SettingsPanel = ({
                   <>
                     <div className="space-y-2">
                       <Label className="text-xs font-medium flex items-center justify-between">
-                        <span>Speech Sensitivity (Raw)</span>
+                        <span>Чувствительность (точно)</span>
                         <span className="text-muted-foreground font-normal">
                           {(vadConfig.sensitivity_rms * 1000).toFixed(1)}
                         </span>
@@ -368,13 +376,13 @@ export const SettingsPanel = ({
 
                     <div className="space-y-2">
                       <Label className="text-xs font-medium flex items-center justify-between">
-                        <span>Silence Duration</span>
+                        <span>Пауза перед отправкой</span>
                         <span className="text-muted-foreground font-normal">
                           {(
                             (vadConfig.silence_chunks * vadConfig.hop_size) /
                             44100
                           ).toFixed(1)}
-                          s
+                          с
                         </span>
                       </Label>
                       <Slider
@@ -391,7 +399,7 @@ export const SettingsPanel = ({
                         className="w-full"
                       />
                       <p className="text-[10px] text-muted-foreground">
-                        How long to wait after speech stops
+                        Сколько ждать тишины после речи, прежде чем отправить
                       </p>
                     </div>
                   </>
@@ -400,7 +408,7 @@ export const SettingsPanel = ({
                 {/* Noise gate - both modes */}
                 <div className="space-y-2">
                   <Label className="text-xs font-medium flex items-center justify-between">
-                    <span>Noise Gate</span>
+                    <span>Шумоподавление</span>
                     <span className="text-muted-foreground font-normal">
                       {(vadConfig.noise_gate_threshold * 1000).toFixed(1)}
                     </span>
@@ -419,7 +427,7 @@ export const SettingsPanel = ({
                     className="w-full"
                   />
                   <p className="text-[10px] text-muted-foreground">
-                    Filters background noise
+                    Отсекает фоновый шум
                   </p>
                 </div>
 
@@ -431,7 +439,7 @@ export const SettingsPanel = ({
                   className="w-full text-xs"
                 >
                   <RotateCcwIcon className="w-3 h-3 mr-1.5" />
-                  Reset to Defaults
+                  Сбросить по умолчанию
                 </Button>
               </div>
             )}
