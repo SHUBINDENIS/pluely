@@ -75,6 +75,7 @@ pub fn run() {
             get_app_version,
             window::set_window_height,
             window::set_window_width,
+            window::set_click_through,
             window::open_dashboard,
             window::toggle_dashboard,
             window::move_window,

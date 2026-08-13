@@ -224,6 +224,20 @@ pub fn show_dashboard_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), Strin
     Ok(())
 }
 
+/// Enable/disable real OS-level click-through for the whole window.
+/// When `ignore` is true, mouse events pass straight through the window to
+/// whatever is behind it. Used by the Ctrl+\ hide cycle (level 2) so the
+/// leftover collapsed strip no longer blocks clicks. This is the reliable
+/// backend equivalent of the JS `setIgnoreCursorEvents`, which did not take
+/// effect on the transparent overlay.
+#[tauri::command]
+pub fn set_click_through(window: tauri::WebviewWindow, ignore: bool) -> Result<(), String> {
+    window
+        .set_ignore_cursor_events(ignore)
+        .map_err(|e| format!("Failed to set click-through: {}", e))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn set_window_width(window: tauri::WebviewWindow, width: u32) -> Result<(), String> {
     let scale = window.scale_factor().unwrap_or(1.0);
