@@ -167,6 +167,9 @@ export function useSystemAudio() {
   // effect closure would otherwise capture a stale isContinuousMode and could
   // drop a manual Stop & Send result.
   const recordingActiveRef = useRef<boolean>(false);
+  // Mirror continuous(manual)-mode so the speech-detected listener never applies
+  // accumulate buffering to a manual Stop & Send (accumulate is VAD-only).
+  const isContinuousModeRef = useRef<boolean>(false);
 
   // Load context settings and VAD config from localStorage on mount
   useEffect(() => {
@@ -314,6 +317,7 @@ export function useSystemAudio() {
   useEffect(() => {
     recordingActiveRef.current =
       capturing || isContinuousMode || isRecordingInContinuousMode;
+    isContinuousModeRef.current = isContinuousMode;
   }, [capturing, isContinuousMode, isRecordingInContinuousMode]);
 
   // Handle single speech detection event (both VAD and continuous modes)
@@ -378,10 +382,11 @@ export function useSystemAudio() {
                 setLastTranscription(transcription);
                 setError("");
 
-                // Accumulate mode: buffer the phrase instead of sending, so the
-                // speaker can finish a multi-part question. The user sends the
-                // batch manually (sendAccumulated). Recording keeps running.
-                if (accumulateModeRef.current) {
+                // Accumulate mode (VAD only): buffer the phrase instead of
+                // sending, so the speaker can finish a multi-part question. The
+                // user sends the batch manually (sendAccumulated). Recording
+                // keeps running. Never applies to a manual Stop & Send.
+                if (accumulateModeRef.current && !isContinuousModeRef.current) {
                   const next = `${accumulatedTextRef.current} ${transcription}`.trim();
                   accumulatedTextRef.current = next;
                   setAccumulatedTextState(next);
@@ -851,6 +856,12 @@ export function useSystemAudio() {
   const setAccumulateMode = useCallback((value: boolean) => {
     accumulateModeRef.current = value;
     setAccumulateModeState(value);
+    // Turning it off drops any buffered text (the buffer only exists to hold a
+    // multi-part question while accumulating).
+    if (!value) {
+      accumulatedTextRef.current = "";
+      setAccumulatedTextState("");
+    }
   }, []);
 
   const clearAccumulated = useCallback(() => {
