@@ -141,9 +141,13 @@ export function useSystemAudio() {
   // digest (see compressOlder) so long sessions stay cheap.
   const [contextSize, setContextSizeState] = useState<number>(50);
   const [compressOlder, setCompressOlderState] = useState<boolean>(true);
+  // Unlimited context: send the ENTIRE session history verbatim (for solving a
+  // long case without losing anything). Overrides contextSize/compression.
+  const [unlimitedContext, setUnlimitedContextState] = useState<boolean>(false);
   // Refs so the async speech→AI flow reads current values without re-subscribing.
   const contextSizeRef = useRef<number>(50);
   const compressOlderRef = useRef<boolean>(true);
+  const unlimitedContextRef = useRef<boolean>(false);
 
   const {
     selectedSttProvider,
@@ -188,6 +192,10 @@ export function useSystemAudio() {
         if (typeof parsed.compressOlder === "boolean") {
           setCompressOlderState(parsed.compressOlder);
           compressOlderRef.current = parsed.compressOlder;
+        }
+        if (typeof parsed.unlimitedContext === "boolean") {
+          setUnlimitedContextState(parsed.unlimitedContext);
+          unlimitedContextRef.current = parsed.unlimitedContext;
         }
       } catch (error) {
         console.error("Failed to load system audio context:", error);
@@ -378,7 +386,15 @@ export function useSystemAudio() {
                 timeoutPromise,
               ]);
 
-              if (transcription.trim()) {
+              // Guard: fetchSTT can RETURN (not throw) sentinel strings for
+              // failed/empty segments. Don't feed those to the AI as a question.
+              const t = transcription.trim();
+              const looksLikeSttError =
+                /^(No transcription found|Transcription failed|Pluely STT Error|Network error:|HTTP \d)/i.test(
+                  t
+                ) || /STT Error:/i.test(t);
+
+              if (t && !looksLikeSttError) {
                 setLastTranscription(transcription);
                 setError("");
 
@@ -408,7 +424,9 @@ export function useSystemAudio() {
                   );
                 }
               } else {
-                setError("Received empty transcription");
+                // Empty/near-silent segment (common in VAD). Ignore silently
+                // instead of flashing an error on nearly every phrase.
+                console.debug("Empty transcription — ignored");
               }
             } catch (sttError: any) {
               console.error("STT Error:", sttError);
@@ -449,6 +467,7 @@ export function useSystemAudio() {
           contextContent: content,
           contextSize: contextSizeRef.current,
           compressOlder: compressOlderRef.current,
+          unlimitedContext: unlimitedContextRef.current,
         };
         safeLocalStorage.setItem(
           STORAGE_KEYS.SYSTEM_AUDIO_CONTEXT,
@@ -491,6 +510,15 @@ export function useSystemAudio() {
     (value: boolean) => {
       compressOlderRef.current = value;
       setCompressOlderState(value);
+      saveContextSettings(useSystemPrompt, contextContent);
+    },
+    [useSystemPrompt, contextContent, saveContextSettings]
+  );
+
+  const setUnlimitedContext = useCallback(
+    (value: boolean) => {
+      unlimitedContextRef.current = value;
+      setUnlimitedContextState(value);
       saveContextSettings(useSystemPrompt, contextContent);
     },
     [useSystemPrompt, contextContent, saveContextSettings]
@@ -719,11 +747,14 @@ export function useSystemAudio() {
       prompt: string,
       previousMessages: Message[]
     ) => {
+      // Supersede any in-flight request and start a fresh controller for THIS
+      // call. The signal is passed to fetchAIResponse so the previous stream is
+      // actually cancelled (previously it wasn't, causing overlapping answers).
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
-
-      abortControllerRef.current = new AbortController();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
 
       // Grab any queued screenshots so this question is sent WITH the images
       // (unified voice + screenshot context). Cleared in `finally` after the request.
@@ -751,37 +782,55 @@ export function useSystemAudio() {
           return;
         }
 
-        // Context window: keep the most-recent N messages verbatim; fold any
-        // older ones into a compact local digest appended to the system prompt.
-        // previousMessages is newest-first, so the first N are the most recent.
-        const size = contextSizeRef.current;
-        const recent = previousMessages.slice(0, size);
-        const older = previousMessages.slice(size);
-        const digest = compressOlderRef.current ? buildOlderDigest(older) : "";
+        // Build the history to send, in CHRONOLOGICAL order (oldest → newest),
+        // which is what both API paths now expect. previousMessages is
+        // newest-first. In unlimited mode we send the whole session verbatim;
+        // otherwise keep the most-recent N and fold older ones into a cheap
+        // local digest appended to the system prompt.
+        let recentChrono: Message[];
+        let digest = "";
+        if (unlimitedContextRef.current) {
+          recentChrono = [...previousMessages].reverse();
+        } else {
+          const size = contextSizeRef.current;
+          const recent = previousMessages.slice(0, size);
+          const older = previousMessages.slice(size);
+          digest = compressOlderRef.current ? buildOlderDigest(older) : "";
+          recentChrono = [...recent].reverse();
+        }
         const effectivePrompt = digest
           ? `${prompt}\n\n[Ранее в этой сессии — сжатая память о более старых сообщениях]:\n${digest}`
           : prompt;
+        const maxHistoryMessages = unlimitedContextRef.current
+          ? 100000
+          : contextSizeRef.current;
 
         try {
           for await (const chunk of fetchAIResponse({
             provider: usePluelyAPI ? undefined : provider,
             selectedProvider: selectedAIProvider,
             systemPrompt: effectivePrompt,
-            history: recent.map((m) => ({
+            history: recentChrono.map((m) => ({
               ...m,
               content: stripDataUrlImages(m.content as string),
             })),
             userMessage: transcription,
             imagesBase64: pendingImages,
+            signal: controller.signal,
+            maxHistoryMessages,
           })) {
+            if (controller.signal.aborted) break;
             fullResponse += chunk;
             setLastAIResponse((prev) => prev + chunk);
           }
         } catch (aiError: any) {
-          setError(aiError.message || "Failed to get AI response");
+          // Ignore errors from a request we deliberately superseded.
+          if (!controller.signal.aborted && aiError?.name !== "AbortError") {
+            setError(aiError.message || "Failed to get AI response");
+          }
         }
 
-        if (fullResponse) {
+        if (fullResponse && !controller.signal.aborted) {
           const timestamp = Date.now();
           setConversation((prev) => ({
             ...prev,
@@ -814,10 +863,14 @@ export function useSystemAudio() {
           }));
         }
       } catch (err) {
-        setError("Failed to get AI response");
+        if (!controller.signal.aborted) setError("Failed to get AI response");
       } finally {
-        setIsAIProcessing(false);
-        setPendingUserMessage("");
+        // Only reset shared UI state if we're still the active request — a
+        // superseded one must not switch off the indicator the new one turned on.
+        if (abortControllerRef.current === controller) {
+          setIsAIProcessing(false);
+          setPendingUserMessage("");
+        }
         // Screenshots have been consumed by this request; clear the queue.
         if (pendingImages.length) clearScreenshots();
         // No auto-restart - user manually controls when to start next recording
@@ -1411,6 +1464,8 @@ export function useSystemAudio() {
     setContextSize,
     compressOlder,
     setCompressOlder,
+    unlimitedContext,
+    setUnlimitedContext,
     startNewConversation,
     // Window resize
     resizeWindow,
