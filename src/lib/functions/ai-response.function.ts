@@ -65,11 +65,11 @@ async function* fetchPluelyAIResponse(params: {
       return;
     }
 
-    // Convert history to the expected format
+    // Convert history to the expected format. History arrives in CHRONOLOGICAL
+    // order (oldest → newest); the API expects the same, so no reversal.
     let historyString: string | undefined;
     if (history.length > 0) {
-      // Create a copy before reversing to avoid mutating the original array
-      const formattedHistory = [...history].reverse().map((msg) => ({
+      const formattedHistory = history.map((msg) => ({
         role: msg.role,
         content: [{ type: "text", text: msg.content }],
       }));
@@ -172,6 +172,7 @@ export async function* fetchAIResponse(params: {
   userMessage: string;
   imagesBase64?: string[];
   signal?: AbortSignal;
+  maxHistoryMessages?: number;
 }): AsyncIterable<string> {
   try {
     const {
@@ -182,6 +183,7 @@ export async function* fetchAIResponse(params: {
       userMessage,
       imagesBase64 = [],
       signal,
+      maxHistoryMessages = 20,
     } = params;
 
     // Check if already aborted
@@ -257,7 +259,8 @@ export async function* fetchAIResponse(params: {
         bodyObj[messagesKey],
         history,
         userMessage,
-        imagesBase64
+        imagesBase64,
+        maxHistoryMessages
       );
       bodyObj[messagesKey] = finalMessages;
     }

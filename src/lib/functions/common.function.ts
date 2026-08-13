@@ -140,10 +140,15 @@ export function buildDynamicMessages(
   messagesTemplate: any[],
   history: Message[],
   userMessage: string,
-  imagesBase64: string[] = []
+  imagesBase64: string[] = [],
+  maxHistory: number = 20
 ): any[] {
-  const MAX_HISTORY_MESSAGES = 20; // context-overflow guard
-  history = history.slice(-MAX_HISTORY_MESSAGES);
+  // `history` is expected in CHRONOLOGICAL order (oldest → newest). Keep only
+  // the most-recent `maxHistory` messages. maxHistory <= 0 means "no limit".
+  history =
+    maxHistory > 0 && history.length > maxHistory
+      ? history.slice(-maxHistory)
+      : history;
   const userMessageTemplateIndex = messagesTemplate.findIndex((m) =>
     JSON.stringify(m).includes("{{TEXT}}")
   );
